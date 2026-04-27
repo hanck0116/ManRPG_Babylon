@@ -8,6 +8,15 @@ function createInputController(scene) {
     s: false,
     d: false,
   };
+  const actionState = {
+    attack: false,
+    dodge: false,
+    lockOn: false,
+  };
+  const movementSources = {
+    keyboard: new BABYLON.Vector2(0, 0),
+    joystick: new BABYLON.Vector2(0, 0),
+  };
 
   const keyMap = {
     KeyW: "w",
@@ -15,6 +24,75 @@ function createInputController(scene) {
     KeyS: "s",
     KeyD: "d",
   };
+  const joystickRoot = document.getElementById("mobileJoystick");
+  const joystickBase = document.getElementById("joystickBase");
+  const joystickKnob = document.getElementById("joystickKnob");
+  const joystickRadius = 60;
+  const knobRadius = 27;
+  const maxDistance = joystickRadius - knobRadius;
+  let activeJoystickPointerId = null;
+
+  function resetJoystick() {
+    movementSources.joystick.set(0, 0);
+    joystickKnob.style.left = "50%";
+    joystickKnob.style.top = "50%";
+  }
+
+  function updateJoystickFromClient(clientX, clientY) {
+    const rect = joystickBase.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const deltaX = clientX - centerX;
+    const deltaY = clientY - centerY;
+    const distance = Math.hypot(deltaX, deltaY);
+
+    let clampedX = deltaX;
+    let clampedY = deltaY;
+
+    if (distance > maxDistance) {
+      const ratio = maxDistance / distance;
+      clampedX *= ratio;
+      clampedY *= ratio;
+    }
+
+    const normalizedX = clampedX / maxDistance;
+    const normalizedY = clampedY / maxDistance;
+
+    movementSources.joystick.set(
+      BABYLON.Scalar.Clamp(normalizedX, -1, 1),
+      BABYLON.Scalar.Clamp(-normalizedY, -1, 1)
+    );
+
+    joystickKnob.style.left = `calc(50% + ${clampedX}px)`;
+    joystickKnob.style.top = `calc(50% + ${clampedY}px)`;
+  }
+
+  joystickRoot.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    activeJoystickPointerId = event.pointerId;
+    joystickRoot.setPointerCapture(event.pointerId);
+    updateJoystickFromClient(event.clientX, event.clientY);
+  });
+
+  joystickRoot.addEventListener("pointermove", (event) => {
+    if (event.pointerId !== activeJoystickPointerId) return;
+    event.preventDefault();
+    updateJoystickFromClient(event.clientX, event.clientY);
+  });
+
+  function stopJoystick(event) {
+    if (event.pointerId !== activeJoystickPointerId) return;
+    activeJoystickPointerId = null;
+    if (joystickRoot.hasPointerCapture(event.pointerId)) {
+      joystickRoot.releasePointerCapture(event.pointerId);
+    }
+    resetJoystick();
+  }
+
+  joystickRoot.addEventListener("pointerup", stopJoystick);
+  joystickRoot.addEventListener("pointercancel", stopJoystick);
+  joystickRoot.addEventListener("pointerleave", stopJoystick);
+  resetJoystick();
 
   scene.onKeyboardObservable.add((kbInfo) => {
     const key = keyMap[kbInfo.event.code];
@@ -28,7 +106,6 @@ function createInputController(scene) {
   });
 
   return {
-    // 향후 모바일 조이스틱 입력을 여기에 합쳐서 반환하면 됨
     getMoveVector() {
       let x = 0;
       let z = 0;
@@ -38,7 +115,9 @@ function createInputController(scene) {
       if (keys.a) x -= 1;
       if (keys.d) x += 1;
 
-      const move = new BABYLON.Vector2(x, z);
+      movementSources.keyboard.set(x, z);
+
+      const move = movementSources.keyboard.add(movementSources.joystick);
       if (move.lengthSquared() > 1) {
         move.normalize();
       }
@@ -46,12 +125,17 @@ function createInputController(scene) {
       return move;
     },
 
-    // 향후 공격/회피/락온 입력 확장용 상태 영역
     getActionState() {
+      return actionState;
+    },
+
+    getInputState() {
       return {
-        attack: false,
-        dodge: false,
-        lockOn: false,
+        movement: {
+          keyboard: movementSources.keyboard.clone(),
+          joystick: movementSources.joystick.clone(),
+        },
+        action: { ...actionState },
       };
     },
   };
