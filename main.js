@@ -233,7 +233,9 @@ function createInputController(scene) {
 }
 
 function forwardFromQuaternion(rotationQuaternion) {
-  return BABYLON.Vector3.TransformCoordinates(BABYLON.Axis.Z, BABYLON.Matrix.FromQuaternion(rotationQuaternion)).normalize();
+  const rotMatrix = BABYLON.Matrix.Identity();
+  rotationQuaternion.toRotationMatrix(rotMatrix);
+  return BABYLON.Vector3.TransformNormal(BABYLON.Axis.Z, rotMatrix).normalize();
 }
 
 function createBattleSystem(player, enemy, input) {
