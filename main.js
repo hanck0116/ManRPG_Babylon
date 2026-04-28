@@ -290,7 +290,8 @@ function createBattleSystem(player, enemy, input) {
       if (toAttacker.lengthSquared() > 0) {
         toAttacker.normalize();
         if (BABYLON.Vector3.Dot(playerForward, toAttacker) >= CONFIG.player.guardFrontDotMin) {
-          finalDamage *= CONFIG.player.guardDamageMultiplier;
+          finalDamage = 0;
+          triggerFeedback("가드 성공", 0.2);
         }
       }
     }
