@@ -105,6 +105,10 @@ html, body {
   background: rgba(255, 120, 120, 0.65);
 }
 
+#actionButtons button:disabled {
+  opacity: 0.45;
+}
+
 #innerWorld {
   position: fixed;
   inset: 0;

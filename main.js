@@ -18,6 +18,13 @@ const REWARD_POOL = [
   { id: "move", label: "이동속도 +0.5", apply: (s) => (s.bonus.moveSpeed += 0.5) },
   { id: "crit", label: "치명타 확률 +5%", apply: (s) => (s.bonus.critChance += 0.05) },
 ];
+const COMBAT_STATE = {
+  COMBAT_READY: "COMBAT_READY",
+  COMBAT_ACTIVE: "COMBAT_ACTIVE",
+  PLAYER_DEAD: "PLAYER_DEAD",
+  ENEMY_DEAD: "ENEMY_DEAD",
+  INNER_WORLD: "INNER_WORLD",
+};
 
 function clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -71,7 +78,7 @@ function createProgressionState() {
 
 function createInputController(scene) {
   const keys = { w: false, a: false, s: false, d: false };
-  const action = { attackPressed: false, dodgePressed: false, guardHeld: false, magicPressed: false };
+  const action = { attackPressed: false, dodgePressed: false, guardHeld: false, magicPressed: false, lockToggle: false };
   let enabled = true;
 
   const joystickRoot = document.getElementById("mobileJoystick");
@@ -81,6 +88,7 @@ function createInputController(scene) {
   const dodgeBtn = document.getElementById("dodgeBtn");
   const guardBtn = document.getElementById("guardBtn");
   const magicBtn = document.getElementById("magicBtn");
+  const lockBtn = document.getElementById("lockBtn");
 
   const movement = { keyboard: new BABYLON.Vector2(), joystick: new BABYLON.Vector2() };
   const keyMap = { KeyW: "w", KeyA: "a", KeyS: "s", KeyD: "d" };
@@ -96,6 +104,7 @@ function createInputController(scene) {
       action.dodgePressed = false;
       action.guardHeld = false;
       action.magicPressed = false;
+      action.lockToggle = false;
       joystickKnob.style.left = "50%";
       joystickKnob.style.top = "50%";
     }
@@ -142,6 +151,11 @@ function createInputController(scene) {
   bindPressButton(
     magicBtn,
     () => (action.magicPressed = true),
+    () => {}
+  );
+  bindPressButton(
+    lockBtn,
+    () => (action.lockToggle = true),
     () => {}
   );
 
@@ -199,6 +213,7 @@ function createInputController(scene) {
     if (code === "Space" && isDown) action.attackPressed = true;
     if ((code === "ShiftLeft" || code === "ShiftRight") && isDown) action.dodgePressed = true;
     if (code === "KeyQ" && isDown) action.magicPressed = true;
+    if (code === "KeyR" && isDown) action.lockToggle = true;
     if (code === "KeyF") {
       if (isDown) action.guardHeld = true;
       if (isUp) action.guardHeld = false;
@@ -212,6 +227,7 @@ function createInputController(scene) {
       action.attackPressed = false;
       action.dodgePressed = false;
       action.magicPressed = false;
+      action.lockToggle = false;
       return out;
     },
     getMoveInput() {
@@ -226,6 +242,12 @@ function createInputController(scene) {
       if (move.lengthSquared() > 1) move.normalize();
       return move;
     },
+    setActionButtonsState(state) {
+      attackBtn.disabled = !state.attack;
+      dodgeBtn.disabled = !state.dodge;
+      magicBtn.disabled = !state.magic;
+      lockBtn.classList.toggle("is-active", !!state.locked);
+    },
   };
 }
 
@@ -238,50 +260,39 @@ function getFacing(mesh) {
 
 function createBattleSystem(scene, player, progression) {
   const playerState = {
-    hp: 100,
-    maxHp: 100,
-    mp: 100,
-    maxMp: 100,
-    moveSpeed: 4.5,
-    attackDamage: 20,
-    critChance: 0.05,
-    dodgeSpeed: 11,
-    dodgeDuration: 0.22,
-    dodgeDistance: 2.6,
-    dodgeTimer: 0,
-    dodging: false,
-    invincible: false,
-    guardHeld: false,
-    attackTimer: 0,
-    attackCooldown: 0,
-    attackHitDone: false,
-    feedback: "",
-    feedbackTimer: 0,
+    hp: 100, maxHp: 100, mp: 100, maxMp: 100, mpRegen: 1,
+    moveSpeed: 4.5, attackDamage: 20, critChance: 0.05,
+    dodgeSpeed: 11, dodgeDuration: 0.22, dodgeDistance: 2.6,
+    dodgeTimer: 0, dodging: false, invincible: false, guardHeld: false,
+    attackTimer: 0, attackCooldown: 0, dodgeCooldown: 0, magicCooldown: 0,
+    attackHitDone: false, feedback: "", feedbackTimer: 0, hitFlashTimer: 0,
   };
-
-  let enemy = null;
-  let enemyFront = null;
-  let enemyMat = null;
+  let enemy = null; let enemyFront = null; let enemyMat = null;
   let enemyDescriptor = { type: "default", mapId: "defaultCylinderRoom" };
-  const enemyState = {
-    hp: 100,
-    maxHp: 100,
-    moveSpeed: 2.6,
-    attackDamage: 12,
-    attackRange: 1.6,
-    chaseRange: 10,
-    attackTimer: 0,
-    attackCooldown: 0,
-    attackHitDone: false,
-  };
+  const enemyState = { hp: 100, maxHp: 100, moveSpeed: 2.6, attackDamage: 12, attackRange: 1.6, chaseRange: 10, attackCooldown: 0, mode: "approach", modeTimer: 0, attackHitDone: false, dashTimer: 0, dashDir: new BABYLON.Vector3(0, 0, 1), hitFlashTimer: 0 };
   const projectileState = [];
   let arenaRadius = 8.2;
-
+  let combatState = COMBAT_STATE.COMBAT_READY;
+  let lockOnActive = false;
   const battle = { phase: "playing" };
 
+  function clampInsideArena(position) {
+    const radius = arenaRadius - 0.35;
+    const len = Math.hypot(position.x, position.z);
+    if (len > radius && len > 0.0001) { const s = radius / len; position.x *= s; position.z *= s; }
+  }
+  function spawnFx(pos, color) {
+    const r = BABYLON.MeshBuilder.CreateTorus(`fx_${Date.now()}_${Math.random()}`, { diameter: 0.7, thickness: 0.05 }, scene);
+    r.position.copyFrom(pos); r.rotation.x = Math.PI / 2;
+    const m = new BABYLON.StandardMaterial(`fxm_${Date.now()}_${Math.random()}`, scene); m.emissiveColor = color; m.alpha = 0.8; r.material = m;
+    setTimeout(() => r.dispose(), 120);
+  }
+  function applyKnockback(target, sourcePos, dist) {
+    if (!target) return; const d = target.position.subtract(sourcePos); d.y = 0; if (d.lengthSquared() < 0.0001) return; d.normalize();
+    target.position.addInPlace(d.scale(dist)); clampInsideArena(target.position);
+  }
   function recomputePlayerFromStats() {
-    const s = progression.stats;
-    const b = progression.bonus;
+    const s = progression.stats, b = progression.bonus;
     playerState.maxHp = 100 + s.vitality * 8 + b.maxHp;
     playerState.maxMp = 100 + s.intelligence * 5;
     playerState.mpRegen = 0.8 + s.wisdom * 0.08;
@@ -293,287 +304,134 @@ function createBattleSystem(scene, player, progression) {
     playerState.hp = Math.min(playerState.hp, playerState.maxHp);
     playerState.mp = Math.min(playerState.mp, playerState.maxMp);
   }
-
   function spawnEnemyForFloor(floor) {
-    if (enemy) {
-      enemy.dispose();
-      enemyFront.dispose();
-    }
-
-    const mapRotation = ["defaultCylinderRoom", "beastArena", "mageChamber", "bossVoidRoom"];
-    enemyDescriptor = {
-      type: floor % 4 === 0 ? "boss" : floor % 2 === 0 ? "beast" : "soldier",
-      mapId: mapRotation[(floor - 1) % mapRotation.length],
-    };
-
+    if (enemy) { enemy.dispose(); enemyFront.dispose(); }
+    const maps = ["defaultCylinderRoom", "beastArena", "mageChamber", "bossVoidRoom"];
+    enemyDescriptor = { type: floor % 4 === 0 ? "boss" : floor % 2 === 0 ? "beast" : "soldier", mapId: maps[(floor - 1) % maps.length] };
     enemy = BABYLON.MeshBuilder.CreateCapsule("enemy", { height: 2, radius: 0.4 }, scene);
-    enemy.position = new BABYLON.Vector3(0, 1, 5);
-    enemy.rotationQuaternion = BABYLON.Quaternion.Identity();
-    enemyMat = new BABYLON.StandardMaterial(`enemyMat${floor}`, scene);
-    enemyMat.diffuseColor = new BABYLON.Color3(1, 0.65, 0.65);
-    enemy.material = enemyMat;
-
-    enemyFront = BABYLON.MeshBuilder.CreateCylinder(
-      "enemyFront",
-      { diameterTop: 0, diameterBottom: 0.24, height: 0.35, tessellation: 4 },
-      scene
-    );
-    enemyFront.parent = enemy;
-    enemyFront.position = new BABYLON.Vector3(0, 1.0, 0.55);
-    enemyFront.rotation.x = Math.PI / 2;
-    const frontMat = new BABYLON.StandardMaterial(`enemyFrontMat${floor}`, scene);
-    frontMat.emissiveColor = new BABYLON.Color3(1, 0.25, 0.25);
-    enemyFront.material = frontMat;
-
-    const scale = 1 + (floor - 1) * 0.18;
-    enemyState.maxHp = 90 * scale;
+    enemy.position = new BABYLON.Vector3(0, 1, 5); enemy.rotationQuaternion = BABYLON.Quaternion.Identity();
+    enemyMat = new BABYLON.StandardMaterial(`enemyMat${floor}`, scene); enemyMat.diffuseColor = new BABYLON.Color3(1, 0.65, 0.65); enemy.material = enemyMat;
+    enemyFront = BABYLON.MeshBuilder.CreateCylinder("enemyFront", { diameterTop: 0, diameterBottom: 0.24, height: 0.35, tessellation: 4 }, scene);
+    enemyFront.parent = enemy; enemyFront.position = new BABYLON.Vector3(0, 1.0, 0.55); enemyFront.rotation.x = Math.PI / 2;
+    const fm = new BABYLON.StandardMaterial(`enemyFrontMat${floor}`, scene); fm.emissiveColor = new BABYLON.Color3(1, 0.25, 0.25); enemyFront.material = fm;
+    const f = Math.max(1, floor);
+    enemyState.maxHp = 90 + (f - 1) * 16;
     enemyState.hp = enemyState.maxHp;
-    enemyState.moveSpeed = 2.3 + floor * 0.12;
-    enemyState.attackDamage = 10 + floor * 1.8;
-    enemyState.attackRange = 1.6 + Math.min(0.5, floor * 0.02);
-    enemyState.attackCooldown = 0;
-    enemyState.attackTimer = 0;
-    enemyState.attackHitDone = false;
-
-    battle.phase = "playing";
+    enemyState.moveSpeed = 2.2 + f * 0.1;
+    enemyState.attackDamage = 9 + f * 1.6;
+    enemyState.attackRange = 1.6 + Math.min(0.4, f * 0.02);
+    enemyState.attackCooldown = Math.max(0.7, 1.35 - f * 0.03);
+    enemyState.mode = "approach"; enemyState.modeTimer = 0; enemyState.attackHitDone = false;
+    battle.phase = "playing"; combatState = COMBAT_STATE.COMBAT_ACTIVE; lockOnActive = false;
   }
-
-  function recoverFull() {
-    playerState.hp = playerState.maxHp;
-    playerState.mp = playerState.maxMp;
-  }
-
+  function recoverFull() { playerState.hp = playerState.maxHp; playerState.mp = playerState.maxMp; }
   function dealDamageToEnemy(amount) {
-    enemyState.hp = Math.max(0, enemyState.hp - amount);
-    if (enemyState.hp <= 0) {
-      battle.phase = "clear";
-    }
+    if (enemyState.hp <= 0) return;
+    enemyState.hp = Math.max(0, enemyState.hp - amount); enemyState.hitFlashTimer = 0.12; applyKnockback(enemy, player.position, 0.55);
+    if (enemyState.hp <= 0) { battle.phase = "clear"; combatState = COMBAT_STATE.ENEMY_DEAD; lockOnActive = false; }
   }
-
-  function clampInsideArena(position) {
-    const radius = arenaRadius - 0.35;
-    const len = Math.hypot(position.x, position.z);
-    if (len > radius && len > 0.0001) {
-      const scale = radius / len;
-      position.x *= scale;
-      position.z *= scale;
-    }
-  }
-
-  function getEquippedSpell() {
-    return progression.spellSlots.known.find((s) => s.id === progression.spellSlots.equipped) || null;
-  }
-
-  function castMagic() {
-    const spell = getEquippedSpell();
-    if (!spell || !enemy) return;
-    if (playerState.mp < spell.mpCost) {
-      playerState.feedback = "MP 부족";
-      playerState.feedbackTimer = 0.2;
-      return;
-    }
-
-    playerState.mp -= spell.mpCost;
-    playerState.feedback = "마법";
-    playerState.feedbackTimer = 0.2;
-
-    const forward = getFacing(player);
-    const bullet = BABYLON.MeshBuilder.CreateSphere(`magic_${Date.now()}`, { diameter: spell.radius * 2 }, scene);
-    bullet.position = player.position.add(forward.scale(0.9)).add(new BABYLON.Vector3(0, 0.6, 0));
-    const mat = new BABYLON.StandardMaterial(`magicMat_${Date.now()}`, scene);
-    mat.emissiveColor = new BABYLON.Color3(1, 0.45, 0.18);
-    bullet.material = mat;
-
-    projectileState.push({
-      mesh: bullet,
-      dir: forward,
-      speed: spell.speed,
-      remain: spell.range,
-      damage: playerState.attackDamage * spell.damageScale,
-    });
-  }
-
   function dealDamageToPlayer(amount) {
     if (playerState.invincible) return;
-
     let final = amount;
-    if (playerState.guardHeld) {
-      const forward = getFacing(player);
-      const toEnemy = enemy.position.subtract(player.position);
-      toEnemy.y = 0;
-      if (toEnemy.lengthSquared() > 0) {
-        toEnemy.normalize();
-        const guardDot = 0.12 + progression.bonus.guardAngle;
-        if (BABYLON.Vector3.Dot(forward, toEnemy) >= guardDot) {
-          final = 0;
-          playerState.feedback = "가드 성공";
-          playerState.feedbackTimer = 0.2;
-        }
-      }
+    if (playerState.guardHeld && enemy) {
+      const f = getFacing(player); const e = enemy.position.subtract(player.position); e.y = 0;
+      if (e.lengthSquared() > 0) { e.normalize(); if (BABYLON.Vector3.Dot(f, e) >= 0.12 + progression.bonus.guardAngle) { final = 0; playerState.feedback = "가드 성공"; playerState.feedbackTimer = 0.2; spawnFx(player.position.add(new BABYLON.Vector3(0, 1, 0)), new BABYLON.Color3(0.3, 0.6, 1)); } }
     }
-
     playerState.hp = Math.max(0, playerState.hp - final);
-    if (playerState.hp <= 0) battle.phase = "defeat";
+    if (final > 0 && enemy) { playerState.hitFlashTimer = 0.1; applyKnockback(player, enemy.position, playerState.guardHeld ? 0.2 : 0.5); }
+    if (playerState.hp <= 0) { battle.phase = "defeat"; combatState = COMBAT_STATE.PLAYER_DEAD; lockOnActive = false; }
+  }
+  function castMagic() {
+    const spell = progression.spellSlots.known.find((s) => s.id === progression.spellSlots.equipped);
+    if (!spell || !enemy) return;
+    if (playerState.mp < spell.mpCost) { playerState.feedback = "MP 부족"; playerState.feedbackTimer = 0.2; return; }
+    playerState.mp -= spell.mpCost; playerState.feedback = "마법"; playerState.feedbackTimer = 0.2;
+    const forward = getFacing(player);
+    const b = BABYLON.MeshBuilder.CreateSphere(`magic_${Date.now()}`, { diameter: spell.radius * 2 }, scene);
+    b.position = player.position.add(forward.scale(0.9)).add(new BABYLON.Vector3(0, 0.6, 0));
+    const m = new BABYLON.StandardMaterial(`magicMat_${Date.now()}`, scene); m.emissiveColor = new BABYLON.Color3(1, 0.45, 0.18); b.material = m;
+    projectileState.push({ mesh: b, dir: forward, speed: spell.speed, remain: spell.range, damage: playerState.attackDamage * spell.damageScale });
   }
 
   return {
-    setupForFloor(floor) {
-      recomputePlayerFromStats();
-      spawnEnemyForFloor(floor);
-      player.position.set(0, 1, 0);
-      player.rotationQuaternion = BABYLON.Quaternion.Identity();
-      playerState.hp = Math.min(playerState.hp, playerState.maxHp);
-      playerState.mp = Math.min(playerState.mp, playerState.maxMp);
-    },
+    setupForFloor(floor) { recomputePlayerFromStats(); spawnEnemyForFloor(floor); player.position.set(0, 1, 0); player.rotationQuaternion = BABYLON.Quaternion.Identity(); },
     recoverFull,
-    setArenaRadius(radius) {
-      arenaRadius = radius;
-      clampInsideArena(player.position);
-      if (enemy) clampInsideArena(enemy.position);
-    },
-    clampAllInsideArena() {
-      clampInsideArena(player.position);
-      if (enemy) clampInsideArena(enemy.position);
-    },
+    setArenaRadius(radius) { arenaRadius = radius; clampInsideArena(player.position); if (enemy) clampInsideArena(enemy.position); },
+    clampAllInsideArena() { clampInsideArena(player.position); if (enemy) clampInsideArena(enemy.position); },
     update(delta, moveDir, actions) {
       if (battle.phase !== "playing") return;
-
       playerState.attackCooldown = Math.max(0, playerState.attackCooldown - delta);
-      enemyState.attackCooldown = Math.max(0, enemyState.attackCooldown - delta);
-      playerState.guardHeld = !!actions.guardHeld && !playerState.dodging;
+      playerState.dodgeCooldown = Math.max(0, playerState.dodgeCooldown - delta);
+      playerState.magicCooldown = Math.max(0, playerState.magicCooldown - delta);
       playerState.mp = Math.min(playerState.maxMp, playerState.mp + playerState.mpRegen * delta);
-
-      if (actions.attackPressed && playerState.attackCooldown <= 0 && !playerState.dodging) {
-        playerState.attackTimer = 0.16;
-        playerState.attackCooldown = 0.3;
-        playerState.attackHitDone = false;
-        playerState.feedback = "공격";
-        playerState.feedbackTimer = 0.15;
-      }
-
-      if (actions.dodgePressed && !playerState.dodging) {
-        playerState.dodging = true;
-        playerState.dodgeTimer = playerState.dodgeDuration;
-        playerState.invincible = true;
-        playerState.feedback = "회피";
-        playerState.feedbackTimer = 0.16;
-      }
-      if (actions.magicPressed) {
-        castMagic();
-      }
-
+      playerState.guardHeld = !!actions.guardHeld && !playerState.dodging;
+      enemyState.attackCooldown = Math.max(0, enemyState.attackCooldown - delta);
+      if (actions.attackPressed && playerState.attackCooldown <= 0 && !playerState.dodging) { playerState.attackTimer = 0.16; playerState.attackCooldown = 0.32; playerState.attackHitDone = false; spawnFx(player.position.add(new BABYLON.Vector3(0, 1, 0.7)), new BABYLON.Color3(1, 0.5, 0.2)); }
+      if (actions.dodgePressed && !playerState.dodging && playerState.dodgeCooldown <= 0) { playerState.dodging = true; playerState.dodgeTimer = playerState.dodgeDuration; playerState.dodgeCooldown = 0.6; playerState.invincible = true; }
+      if (actions.magicPressed && playerState.magicCooldown <= 0) { playerState.magicCooldown = 0.38; castMagic(); }
       if (playerState.attackTimer > 0) {
         playerState.attackTimer -= delta;
-        if (!playerState.attackHitDone) {
-          const toEnemy = enemy.position.subtract(player.position);
-          toEnemy.y = 0;
-          const dist = toEnemy.length();
-          if (dist <= 1.85) {
-            toEnemy.normalize();
-            if (BABYLON.Vector3.Dot(getFacing(player), toEnemy) > 0.2) {
-              const crit = Math.random() < playerState.critChance ? 1.5 : 1;
-              dealDamageToEnemy(playerState.attackDamage * crit);
-              playerState.attackHitDone = true;
-              if (crit > 1) {
-                playerState.feedback = "치명타!";
-                playerState.feedbackTimer = 0.22;
-              }
-            }
-          }
+        if (!playerState.attackHitDone && enemy) {
+          const toEnemy = enemy.position.subtract(player.position); toEnemy.y = 0;
+          if (toEnemy.length() <= 1.85) { toEnemy.normalize(); if (BABYLON.Vector3.Dot(getFacing(player), toEnemy) > 0.2) { const crit = Math.random() < playerState.critChance ? 1.5 : 1; dealDamageToEnemy(playerState.attackDamage * crit); playerState.attackHitDone = true; } }
         }
       }
-
       if (playerState.dodging) {
-        const dodgeDir = moveDir.lengthSquared() > 0 ? moveDir : getFacing(player);
-        player.position.addInPlace(dodgeDir.scale(playerState.dodgeSpeed * delta));
-        clampInsideArena(player.position);
-        playerState.dodgeTimer -= delta;
-        if (playerState.dodgeTimer < 0.12) playerState.invincible = false;
-        if (playerState.dodgeTimer <= 0) {
-          playerState.dodging = false;
-          playerState.invincible = false;
-        }
+        const d = moveDir.lengthSquared() > 0 ? moveDir : getFacing(player);
+        player.position.addInPlace(d.scale(playerState.dodgeSpeed * delta)); clampInsideArena(player.position);
+        playerState.dodgeTimer -= delta; if (playerState.dodgeTimer < 0.12) playerState.invincible = false; if (playerState.dodgeTimer <= 0) { playerState.dodging = false; playerState.invincible = false; }
       }
-
-      const toPlayer = player.position.subtract(enemy.position);
-      toPlayer.y = 0;
-      const distToPlayer = toPlayer.length();
-
-      if (distToPlayer > 0.001) {
-        const dir = toPlayer.normalize();
-        const yaw = Math.atan2(dir.x, dir.z);
-        const targetRot = BABYLON.Quaternion.FromEulerAngles(0, yaw, 0);
-        enemy.rotationQuaternion = BABYLON.Quaternion.Slerp(enemy.rotationQuaternion, targetRot, Math.min(1, delta * 8));
-      }
-
-      if (distToPlayer > enemyState.attackRange && distToPlayer < enemyState.chaseRange) {
-        enemy.position.addInPlace(toPlayer.normalize().scale(enemyState.moveSpeed * delta));
-        clampInsideArena(enemy.position);
-      } else if (enemyState.attackCooldown <= 0 && distToPlayer <= enemyState.attackRange) {
-        enemyState.attackTimer = 0.22;
-        enemyState.attackCooldown = 1.2;
-        enemyState.attackHitDone = false;
-      }
-
-      if (enemyState.attackTimer > 0) {
-        enemyState.attackTimer -= delta;
-        if (!enemyState.attackHitDone && distToPlayer <= enemyState.attackRange + 0.1) {
-          enemyState.attackHitDone = true;
-          dealDamageToPlayer(enemyState.attackDamage);
-        }
-      }
-
-      for (let i = projectileState.length - 1; i >= 0; i--) {
-        const p = projectileState[i];
-        const step = p.speed * delta;
-        p.mesh.position.addInPlace(p.dir.scale(step));
-        p.remain -= step;
-        if (enemy) {
-          const dist = BABYLON.Vector3.Distance(p.mesh.position, enemy.position.add(new BABYLON.Vector3(0, 0.7, 0)));
-          if (dist <= 0.8) {
-            dealDamageToEnemy(p.damage);
-            p.remain = 0;
+      if (enemy) {
+        const toPlayer = player.position.subtract(enemy.position); toPlayer.y = 0; const dist = toPlayer.length();
+        if (dist > 0.001) { const dir = toPlayer.normalize(); const yaw = Math.atan2(dir.x, dir.z); enemy.rotationQuaternion = BABYLON.Quaternion.Slerp(enemy.rotationQuaternion, BABYLON.Quaternion.FromEulerAngles(0, yaw, 0), Math.min(1, delta * 8)); }
+        enemyState.modeTimer = Math.max(0, enemyState.modeTimer - delta);
+        if (enemyState.mode === "approach") { if (dist > 2.1) enemy.position.addInPlace(toPlayer.normalize().scale(enemyState.moveSpeed * delta)); else { enemyState.mode = "hold"; enemyState.modeTimer = 0.4; } }
+        else if (enemyState.mode === "hold") {
+          if (dist < 1.4) enemy.position.addInPlace(toPlayer.normalize().scale(-enemyState.moveSpeed * 0.7 * delta));
+          if (enemyState.modeTimer <= 0) {
+            if (enemyState.attackCooldown <= 0 && Math.random() < 0.35) { enemyState.mode = "dash"; enemyState.dashTimer = 0.25; enemyState.dashDir.copyFrom(toPlayer.normalize()); enemyState.attackHitDone = false; enemyState.attackCooldown = Math.max(0.65, 1.25 - progression.floor * 0.04); }
+            else if (enemyState.attackCooldown <= 0) { enemyState.mode = "basicAttack"; enemyState.modeTimer = 0.22; enemyState.attackHitDone = false; enemyState.attackCooldown = Math.max(0.72, 1.35 - progression.floor * 0.03); }
+            else { enemyState.mode = "retreat"; enemyState.modeTimer = 0.25; }
           }
-        }
-        if (p.remain <= 0) {
-          p.mesh.dispose();
-          projectileState.splice(i, 1);
-        }
+        } else if (enemyState.mode === "basicAttack") {
+          if (!enemyState.attackHitDone && dist <= enemyState.attackRange + 0.25) { enemyState.attackHitDone = true; dealDamageToPlayer(enemyState.attackDamage); }
+          if (enemyState.modeTimer <= 0) { enemyState.mode = "cooldown"; enemyState.modeTimer = 0.25; }
+        } else if (enemyState.mode === "dash") {
+          enemy.position.addInPlace(enemyState.dashDir.scale(enemyState.moveSpeed * 2.6 * delta)); enemyState.dashTimer -= delta;
+          if (!enemyState.attackHitDone && dist <= enemyState.attackRange + 0.35) { enemyState.attackHitDone = true; dealDamageToPlayer(enemyState.attackDamage * 1.25); }
+          if (enemyState.dashTimer <= 0) { enemyState.mode = "retreat"; enemyState.modeTimer = 0.2; }
+        } else if (enemyState.mode === "retreat") {
+          if (dist < 2.6) enemy.position.addInPlace(toPlayer.normalize().scale(-enemyState.moveSpeed * delta));
+          if (enemyState.modeTimer <= 0) { enemyState.mode = "cooldown"; enemyState.modeTimer = 0.25; }
+        } else if (enemyState.mode === "cooldown" && enemyState.modeTimer <= 0) enemyState.mode = dist > 2.4 ? "approach" : "hold";
+        if (dist > 6.5) enemyState.mode = "approach";
+        clampInsideArena(enemy.position);
       }
-
-      playerState.feedbackTimer = Math.max(0, playerState.feedbackTimer - delta);
-      if (playerState.feedbackTimer <= 0) playerState.feedback = "";
+      for (let i = projectileState.length - 1; i >= 0; i--) {
+        const p = projectileState[i]; const step = p.speed * delta; p.mesh.position.addInPlace(p.dir.scale(step)); p.remain -= step;
+        if (enemy) { const d = BABYLON.Vector3.Distance(p.mesh.position, enemy.position.add(new BABYLON.Vector3(0, 0.7, 0))); if (d <= 0.8) { dealDamageToEnemy(p.damage); p.remain = 0; } }
+        if (p.remain <= 0) { p.mesh.dispose(); projectileState.splice(i, 1); }
+      }
+      playerState.feedbackTimer = Math.max(0, playerState.feedbackTimer - delta); if (playerState.feedbackTimer <= 0) playerState.feedback = "";
+      playerState.hitFlashTimer = Math.max(0, playerState.hitFlashTimer - delta); enemyState.hitFlashTimer = Math.max(0, enemyState.hitFlashTimer - delta);
     },
-    getPlayerState() {
-      return { ...playerState };
-    },
-    getEnemyState() {
-      return { ...enemyState, mesh: enemy };
-    },
-    getEnemyDescriptor() {
-      return { ...enemyDescriptor };
-    },
-    despawnEnemy() {
-      if (enemy) enemy.dispose();
-      if (enemyFront) enemyFront.dispose();
-      enemy = null;
-      enemyFront = null;
-      enemyMat = null;
-      projectileState.forEach((p) => p.mesh.dispose());
-      projectileState.length = 0;
-    },
-    getPhase() {
-      return battle.phase;
-    },
+    getPlayerState() { return { ...playerState }; },
+    getEnemyState() { return { ...enemyState, mesh: enemy }; },
+    getEnemyDescriptor() { return { ...enemyDescriptor }; },
+    despawnEnemy() { if (enemy) enemy.dispose(); if (enemyFront) enemyFront.dispose(); enemy = null; enemyFront = null; enemyMat = null; lockOnActive = false; combatState = COMBAT_STATE.INNER_WORLD; projectileState.forEach((p) => p.mesh.dispose()); projectileState.length = 0; },
+    getPhase() { return battle.phase; },
+    getCombatState() { return combatState; },
+    toggleLockOn() { if (enemy && enemyState.hp > 0) lockOnActive = !lockOnActive; else lockOnActive = false; return lockOnActive; },
+    isLockOnActive() { return lockOnActive; },
+    getCooldownState() { return { attack: playerState.attackCooldown <= 0, dodge: playerState.dodgeCooldown <= 0 && !playerState.dodging, magic: playerState.magicCooldown <= 0 && playerState.mp >= 14 }; },
     setPlayerEmissive(playerMat) {
       if (playerState.dodging) playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.9, 1);
       else if (playerState.guardHeld) playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.45, 1);
       else if (playerState.attackTimer > 0) playerMat.emissiveColor = new BABYLON.Color3(1, 0.45, 0.2);
       else playerMat.emissiveColor = BABYLON.Color3.Black();
-
-      if (enemyMat) {
-        enemyMat.emissiveColor = enemyState.attackTimer > 0 ? new BABYLON.Color3(1, 0.2, 0.2) : BABYLON.Color3.Black();
-      }
+      playerMat.alpha = playerState.dodging ? 0.55 : 1;
+      if (playerState.hitFlashTimer > 0) playerMat.emissiveColor = new BABYLON.Color3(1, 0.2, 0.2);
+      if (enemyMat) { enemyMat.emissiveColor = enemyState.mode === "basicAttack" || enemyState.mode === "dash" ? new BABYLON.Color3(1, 0.2, 0.2) : BABYLON.Color3.Black(); if (enemyState.hitFlashTimer > 0) enemyMat.emissiveColor = new BABYLON.Color3(1, 1, 1); }
     },
   };
 }
@@ -766,12 +624,19 @@ function createScene() {
     const dt = engine.getDeltaTime() / 1000;
 
     const moveInput = input.getMoveInput();
-    const camForward = camera.getForwardRay().direction;
-    camForward.y = 0;
-    if (camForward.lengthSquared() > 0) camForward.normalize();
-    const camRight = BABYLON.Vector3.Cross(BABYLON.Axis.Y, camForward).normalize();
+    const eState = battle.getEnemyState();
+    let baseForward = camera.getForwardRay().direction;
+    baseForward.y = 0;
+    if (baseForward.lengthSquared() > 0) baseForward.normalize();
+    let baseRight = BABYLON.Vector3.Cross(BABYLON.Axis.Y, baseForward).normalize();
+    if (battle.isLockOnActive() && eState.mesh && gameMode === MAP_STATE.FLOOR_COMBAT) {
+      baseForward = eState.mesh.position.subtract(player.position);
+      baseForward.y = 0;
+      if (baseForward.lengthSquared() > 0) baseForward.normalize();
+      baseRight = BABYLON.Vector3.Cross(BABYLON.Axis.Y, baseForward).normalize();
+    }
 
-    const moveDir = camRight.scale(moveInput.x).add(camForward.scale(moveInput.y));
+    const moveDir = baseRight.scale(moveInput.x).add(baseForward.scale(moveInput.y));
     if (moveDir.lengthSquared() > 0) {
       moveDir.normalize();
       const yaw = Math.atan2(moveDir.x, moveDir.z);
@@ -780,6 +645,9 @@ function createScene() {
     }
 
     const actions = input.consumeActions();
+    if (actions.lockToggle && gameMode === MAP_STATE.FLOOR_COMBAT) {
+      battle.toggleLockOn();
+    }
     if (gameMode === MAP_STATE.FLOOR_COMBAT) {
       battle.update(dt, moveDir, actions);
     }
@@ -796,9 +664,16 @@ function createScene() {
     }
 
     battle.setPlayerEmissive(playerMat);
-    camera.setTarget(player.position);
+    if (battle.isLockOnActive() && eState.mesh && gameMode === MAP_STATE.FLOOR_COMBAT) {
+      const center = player.position.add(eState.mesh.position).scale(0.5);
+      camera.setTarget(center);
+      const dist = BABYLON.Vector3.Distance(player.position, eState.mesh.position);
+      camera.radius = Math.min(16, Math.max(8, dist * 1.8));
+      camera.beta = Math.PI / 3.1;
+    } else {
+      camera.setTarget(player.position);
+    }
 
-    const eState = battle.getEnemyState();
     hud.floorInfo.textContent = `Floor: ${progression.floor}`;
     hud.progressInfo.textContent = `Lv ${progression.level} | Stat Pts ${progression.statPoints} | Coin ${progression.coins}`;
     hud.playerHp.textContent = `플레이어 HP: ${Math.ceil(pState.hp)} / ${Math.ceil(pState.maxHp)}`;
@@ -811,6 +686,7 @@ function createScene() {
     const equippedSpell = progression.spellSlots.known.find((s) => s.id === progression.spellSlots.equipped);
     hud.spellInfo.textContent = `마법: ${equippedSpell ? equippedSpell.name : "-"}`;
     hud.actionFeedback.textContent = pState.feedback;
+    input.setActionButtonsState({ ...battle.getCooldownState(), locked: battle.isLockOnActive() });
 
     if (gameMode === MAP_STATE.FLOOR_COMBAT && battle.getPhase() === "clear") {
       hud.battleMessage.textContent = "층 클리어";
@@ -822,6 +698,9 @@ function createScene() {
       input.setEnabled(false);
     } else {
       hud.battleMessage.textContent = "";
+    }
+    if (gameMode === MAP_STATE.INNER_WORLD && battle.isLockOnActive()) {
+      battle.toggleLockOn();
     }
   });
 
