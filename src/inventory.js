@@ -7,6 +7,7 @@
       internalManualCount: 0,
       swordEnergyCount: 0,
       martialManualTicket: 0,
+      skillResetTicketCount: 0,
     };
   }
 

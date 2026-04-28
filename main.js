@@ -315,29 +315,29 @@ function createBattleSystem(scene, player, progression) {
   }
   function castMagic() {
     const spell = progression.inventory.magicList.find((s) => s.id === progression.equippedMagicId);
-    if (!spell) { playerState.feedback = "장착 마법 없음"; playerState.feedbackTimer = 0.2; return; }
-    if (playerState.mp < spell.mpCost) { playerState.feedback = "MP 부족"; playerState.feedbackTimer = 0.2; return; }
+    if (!spell) { playerState.feedback = "장착 마법 없음"; playerState.feedbackTimer = 0.2; return { casted: false }; }
+    if (playerState.mp < spell.mpCost) { playerState.feedback = "MP 부족"; playerState.feedbackTimer = 0.2; return { casted: false }; }
     playerState.mp -= spell.mpCost; playerState.feedback = "마법"; playerState.feedbackTimer = 0.2;
     const forward = getFacing(player);
     const magicBase = (spell.damage || 0) + (progression.growth.state.derivedStats.magicDamage || 0) + progression.growth.state.baseStats.intelligence * 2;
 
     if (spell.type === "heal") {
       playerState.hp = Math.min(playerState.maxHp, playerState.hp + 120);
-      return;
+      return { casted: true, mpCost: spell.mpCost };
     }
     if (spell.type === "shield") {
       playerState.guardHeld = true;
       playerState.feedback = "보호막";
-      return;
+      return { casted: true, mpCost: spell.mpCost };
     }
     if (spell.type === "movement") {
       player.position.addInPlace(forward.scale(2.4));
       clampInsideArena(player.position);
-      return;
+      return { casted: true, mpCost: spell.mpCost };
     }
     if (spell.type === "instant") {
       if (enemy) dealDamageToEnemy(magicBase);
-      return;
+      return { casted: true, mpCost: spell.mpCost };
     }
 
     if (spell.type === "projectile" || spell.type === "summon") {
@@ -345,7 +345,7 @@ function createBattleSystem(scene, player, progression) {
       b.position = player.position.add(forward.scale(0.9)).add(new BABYLON.Vector3(0, 0.6, 0));
       const m = new BABYLON.StandardMaterial(`magicMat_${Date.now()}`, scene); m.emissiveColor = new BABYLON.Color3(1, 0.45, 0.18); b.material = m;
       projectileState.push({ mesh: b, dir: forward, speed: 14, remain: 14, damage: magicBase });
-      return;
+      return { casted: true, mpCost: spell.mpCost };
     }
 
     // area/beam/field/debuff/buff 기본 처리: 전방 범위 타격 또는 상태효과 틀
@@ -355,6 +355,7 @@ function createBattleSystem(scene, player, progression) {
         dealDamageToEnemy(magicBase * 0.9);
       }
     }
+    return { casted: true, mpCost: spell.mpCost };
   }
 
   return {
@@ -373,7 +374,13 @@ function createBattleSystem(scene, player, progression) {
       enemyState.attackCooldown = Math.max(0, enemyState.attackCooldown - delta);
       if (actions.attackPressed && playerState.attackCooldown <= 0 && !playerState.dodging) { playerState.attackTimer = 0.16; playerState.attackCooldown = 0.32; playerState.attackHitDone = false; spawnFx(player.position.add(new BABYLON.Vector3(0, 1, 0.7)), new BABYLON.Color3(1, 0.5, 0.2)); }
       if (actions.dodgePressed && !playerState.dodging && playerState.dodgeCooldown <= 0) { playerState.dodging = true; playerState.dodgeTimer = playerState.dodgeDuration; playerState.dodgeCooldown = 0.6; playerState.invincible = true; }
-      if (actions.magicPressed && playerState.magicCooldown <= 0) { playerState.magicCooldown = 0.38; castMagic(); }
+      if (actions.magicPressed && playerState.magicCooldown <= 0) {
+        const result = castMagic();
+        if (result.casted) {
+          const reduction = Math.min(1, progression.multiCastingCount * 0.1);
+          playerState.magicCooldown = result.mpCost * 0.03 * (1 - reduction);
+        }
+      }
       if (playerState.attackTimer > 0) {
         playerState.attackTimer -= delta;
         if (!playerState.attackHitDone && enemy) {
@@ -630,6 +637,8 @@ function createScene() {
       if (reward.payload.manualType === "sword") progression.inventory.swordEnergyCount += 1;
     } else if (reward.type === "spellBook") {
       progression.inventory.spellBooks.push({ grade: reward.payload.grade, used: false });
+    } else if (reward.type === "skillResetTicket") {
+      progression.inventory.skillResetTicketCount += 1;
     } else if (reward.type === "coin") {
       progression.coins += reward.payload.amount;
     }
