@@ -8,7 +8,57 @@
 </head>
 <body>
   <canvas id="gameCanvas"></canvas>
-  <div id="hud">
+  <div id="titleScreen">
+    <h1>ManRPG</h1>
+    <p>3D Tower Combat Prototype</p>
+    <button id="startGameBtn" type="button">게임 시작</button>
+    <button id="continueGameBtn" type="button">이어하기</button>
+  </div>
+
+  <div id="characterCreation" class="hidden">
+    <h2>캐릭터 생성</h2>
+    <div id="ccStepText">1/10</div>
+    <div id="ccError"></div>
+    <div id="ccStepName">
+      <label>이름 <input id="charNameInput" type="text"></label>
+      <label>성별 <input id="charGenderInput" type="text"></label>
+    </div>
+    <div id="ccStepStats" class="hidden">
+      <p>능력치 분배: 총 54 포인트</p>
+      <div id="ccRemainPoints"></div>
+      <div id="ccStatInputs"></div>
+    </div>
+    <div id="ccStepMantra" class="hidden">
+      <div id="mantraPresetButtons"></div>
+      <label>만트라 이름 <input id="mantraNameInput" type="text"></label>
+      <label>만트라 분류 <input id="mantraCategoryInput" type="text" placeholder="예: 크리쳐류-변신형"></label>
+      <label>만트라 설명 <textarea id="mantraDescInput" rows="2"></textarea></label>
+    </div>
+    <div id="ccStepOriginalMana" class="hidden">
+      <div id="manaPresetButtons"></div>
+      <label>오리지널 마나 이름 <input id="manaNameInput" type="text"></label>
+      <label>오리지널 마나 유형 <input id="manaTypeInput" type="text"></label>
+      <label>오리지널 마나 설명 <textarea id="manaDescInput" rows="2"></textarea></label>
+    </div>
+    <div id="ccStepLore" class="hidden">
+      <label>세계 멸망 원인 <textarea id="worldCauseInput" rows="2"></textarea></label>
+      <label>멸망시킨 존재 <input id="destroyerInput" type="text"></label>
+      <label>마지막 순간 <textarea id="finalMomentInput" rows="2"></textarea></label>
+      <label>목표 <textarea id="goalInput" rows="2"></textarea></label>
+    </div>
+    <div id="ccStepConfirm" class="hidden">
+      <h3>캐릭터 시트</h3>
+      <pre id="characterSheetPreview"></pre>
+    </div>
+    <div class="ccButtons">
+      <button id="ccBackBtn" type="button">이전</button>
+      <button id="ccNextBtn" type="button">다음</button>
+      <button id="ccEditBtn" type="button" class="hidden">수정하기</button>
+      <button id="enterFloorBtn" type="button" class="hidden">1층 진입</button>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
     <div id="floorInfo">Floor: 1</div>
     <div id="progressInfo">Lv 1 | Stat Pts 0 | Coin 0</div>
     <div id="playerHp">플레이어 HP: 100 / 100</div>
@@ -26,12 +76,12 @@
     <div id="actionFeedback"></div>
   </div>
 
-  <div id="mobileJoystick" aria-hidden="true">
+  <div id="mobileJoystick" aria-hidden="true" class="hidden">
     <div id="joystickBase">
       <div id="joystickKnob"></div>
     </div>
   </div>
-  <div id="actionButtons">
+  <div id="actionButtons" class="hidden">
     <button id="attackBtn" type="button">공격</button>
     <button id="dodgeBtn" type="button">회피</button>
     <button id="guardBtn" type="button">가드</button>
@@ -115,6 +165,8 @@
   <script src="src/skills.js"></script>
   <script src="src/skillSystem.js"></script>
   <script src="src/skillUI.js"></script>
+  <script src="src/characterCreation.js"></script>
+  <script src="src/saveSystem.js"></script>
   <script src="src/innerWorld.js"></script>
   <script src="src/ui.js"></script>
   <script src="src/maps/floorMaps.js"></script>

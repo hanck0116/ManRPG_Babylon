@@ -18,6 +18,15 @@ const COMBAT_STATE = {
   INNER_WORLD: "INNER_WORLD",
 };
 
+const GAME_STATE = {
+  TITLE: "TITLE",
+  CHARACTER_CREATION: "CHARACTER_CREATION",
+  CHARACTER_CONFIRM: "CHARACTER_CONFIRM",
+  FLOOR_COMBAT: "FLOOR_COMBAT",
+  INNER_WORLD: "INNER_WORLD",
+  GAME_OVER: "GAME_OVER",
+};
+
 function clamp01(v) {
   return Math.max(0, Math.min(1, v));
 }
@@ -33,6 +42,15 @@ function createProgressionState() {
     multiCastingCount: 0,
     equippedMagicId: null,
     mantra: "화염",
+    profile: {
+      name: "",
+      gender: "",
+      worldDestructionCause: "",
+      destroyer: "",
+      finalMoment: "",
+      goal: "",
+    },
+    originalMana: { name: "", type: "", description: "" },
     growth,
     inventory: createInventoryState(),
     currentRewards: [],
@@ -566,7 +584,8 @@ function createScene() {
   const scene = new BABYLON.Scene(engine);
   const progression = createProgressionState();
   const mapManager = createMapManager(scene);
-  let gameMode = MAP_STATE.FLOOR_COMBAT;
+  let gameMode = null;
+  let gameState = GAME_STATE.TITLE;
 
   const camera = new BABYLON.ArcRotateCamera("camera", Math.PI / 2, Math.PI / 3, 12, new BABYLON.Vector3(0, 1, 0), scene);
   camera.attachControl(canvas, true);
@@ -595,9 +614,7 @@ function createScene() {
 
   const input = createInputController(scene);
   const battle = createBattleSystem(scene, player, progression);
-  battle.setupForFloor(progression.floor);
-  const initialMap = mapManager.showFloorCombatMap(battle.getEnemyDescriptor(), { floor: progression.floor, level: progression.level });
-  battle.setArenaRadius(initialMap.bounds?.arenaRadius || 8.2);
+  mapManager.clearCurrentMap();
 
   const hud = {
     floorInfo: document.getElementById("floorInfo"),
@@ -617,6 +634,39 @@ function createScene() {
   };
 
   const ui = {
+    titleScreen: document.getElementById("titleScreen"),
+    startGameBtn: document.getElementById("startGameBtn"),
+    continueGameBtn: document.getElementById("continueGameBtn"),
+    characterCreation: document.getElementById("characterCreation"),
+    ccStepText: document.getElementById("ccStepText"),
+    ccError: document.getElementById("ccError"),
+    ccStepName: document.getElementById("ccStepName"),
+    ccStepStats: document.getElementById("ccStepStats"),
+    ccStepMantra: document.getElementById("ccStepMantra"),
+    ccStepOriginalMana: document.getElementById("ccStepOriginalMana"),
+    ccStepLore: document.getElementById("ccStepLore"),
+    ccStepConfirm: document.getElementById("ccStepConfirm"),
+    charNameInput: document.getElementById("charNameInput"),
+    charGenderInput: document.getElementById("charGenderInput"),
+    ccRemainPoints: document.getElementById("ccRemainPoints"),
+    ccStatInputs: document.getElementById("ccStatInputs"),
+    mantraPresetButtons: document.getElementById("mantraPresetButtons"),
+    manaPresetButtons: document.getElementById("manaPresetButtons"),
+    mantraNameInput: document.getElementById("mantraNameInput"),
+    mantraCategoryInput: document.getElementById("mantraCategoryInput"),
+    mantraDescInput: document.getElementById("mantraDescInput"),
+    manaNameInput: document.getElementById("manaNameInput"),
+    manaTypeInput: document.getElementById("manaTypeInput"),
+    manaDescInput: document.getElementById("manaDescInput"),
+    worldCauseInput: document.getElementById("worldCauseInput"),
+    destroyerInput: document.getElementById("destroyerInput"),
+    finalMomentInput: document.getElementById("finalMomentInput"),
+    goalInput: document.getElementById("goalInput"),
+    characterSheetPreview: document.getElementById("characterSheetPreview"),
+    ccBackBtn: document.getElementById("ccBackBtn"),
+    ccNextBtn: document.getElementById("ccNextBtn"),
+    ccEditBtn: document.getElementById("ccEditBtn"),
+    enterFloorBtn: document.getElementById("enterFloorBtn"),
     inner: document.getElementById("innerWorld"),
     innerStepText: document.getElementById("innerStepText"),
     rewardPanel: document.getElementById("rewardPanel"),
@@ -661,6 +711,9 @@ function createScene() {
     shopDoneBtn: document.getElementById("shopDoneBtn"),
   };
   const magicSelect = document.getElementById("magicSelect");
+  const actionButtonsWrap = document.getElementById("actionButtons");
+  const joystickWrap = document.getElementById("mobileJoystick");
+  const characterForm = resetCharacterCreationForm();
   setSkillPlayerContext(progression);
   SKILL_TYPES.forEach((type) => {
     const op = document.createElement("option");
@@ -674,6 +727,131 @@ function createScene() {
     op.textContent = attr;
     ui.skillAttributeSelect.appendChild(op);
   });
+
+  function applyGameplayVisibility(isCombat) {
+    document.getElementById("hud").classList.toggle("hidden", !isCombat);
+    actionButtonsWrap.classList.toggle("hidden", !isCombat);
+    joystickWrap.classList.toggle("hidden", !isCombat);
+  }
+
+  function renderCharacterSheetPreview() {
+    const tempPlayer = createPlayerFromCharacterForm(characterForm);
+    const statCap = getStatCap(1);
+    const lines = [
+      `[캐릭터 정보]`,
+      `이름: ${tempPlayer.profile.name}`,
+      `성별: ${tempPlayer.profile.gender}`,
+      `세계 멸망 원인: ${tempPlayer.profile.worldDestructionCause}`,
+      `멸망시킨 존재: ${tempPlayer.profile.destroyer}`,
+      `마지막 순간: ${tempPlayer.profile.finalMoment}`,
+      `목표: ${tempPlayer.profile.goal}`,
+      ``,
+      `[레벨]`,
+      `Lv 1`,
+      ``,
+      `[능력치]`,
+      `힘 ${tempPlayer.officialPrimary.strength} / 민첩 ${tempPlayer.officialPrimary.agility} / 외모 ${tempPlayer.officialPrimary.appearance}`,
+      `지능 ${tempPlayer.officialPrimary.intelligence} / 체력 ${tempPlayer.officialPrimary.vitality} / 지혜 ${tempPlayer.officialPrimary.wisdom}`,
+      `남은 스탯 포인트 0`,
+      `현재 기본 스탯 최대치 ${statCap}`,
+      ``,
+      `[파생 수치]`,
+      `최대 HP ${tempPlayer.officialDerivedStats.maxHp} / 현재 HP ${tempPlayer.hp}`,
+      `최대 MP ${tempPlayer.officialDerivedStats.maxMp} / 현재 MP ${tempPlayer.mp}`,
+      `MP 회복 ${tempPlayer.officialDerivedStats.mpRegen}`,
+      `평타 피해 ${tempPlayer.officialDerivedStats.basicAttackDamage}`,
+      `멀티케스팅 수 ${tempPlayer.officialDerivedStats.multiCastingCount}`,
+      ``,
+      `[만트라] ${characterForm.mantra.name} | ${characterForm.mantra.category} | ${characterForm.mantra.description}`,
+      `[오리지널 마나] ${characterForm.originalMana.name} | ${characterForm.originalMana.type} | ${characterForm.originalMana.description}`,
+      `[스킬] 없음`,
+      `[마법] 없음 (기본 지급 없음)`,
+      `[무공서] 외공서 0 / 내공서 0 / 검기 0 / 검기 단계 없음`,
+      `[마법서] 없음`,
+      `[코인] 0`,
+    ];
+    ui.characterSheetPreview.textContent = lines.join("\n");
+  }
+
+  function renderCharacterCreation() {
+    const step = CHARACTER_CREATION_STEPS[characterForm.stepIndex];
+    ui.ccStepText.textContent = `${characterForm.stepIndex + 1}/${CHARACTER_CREATION_STEPS.length}`;
+    ui.ccStepName.classList.toggle("hidden", step !== "name");
+    ui.ccStepStats.classList.toggle("hidden", step !== "stats");
+    ui.ccStepMantra.classList.toggle("hidden", step !== "mantra");
+    ui.ccStepOriginalMana.classList.toggle("hidden", step !== "originalMana");
+    ui.ccStepLore.classList.toggle("hidden", step !== "lore");
+    ui.ccStepConfirm.classList.toggle("hidden", step !== "confirm");
+    ui.ccEditBtn.classList.toggle("hidden", step !== "confirm");
+    ui.enterFloorBtn.classList.toggle("hidden", step !== "confirm");
+    ui.ccNextBtn.classList.toggle("hidden", step === "confirm");
+    ui.ccBackBtn.disabled = characterForm.stepIndex === 0;
+    if (step === "stats") {
+      const sum = CHARACTER_CREATION_STAT_KEYS.reduce((a, k) => a + Number(characterForm.statAllocation[k] || 0), 0);
+      ui.ccRemainPoints.textContent = `총합 ${sum} / 54 | 남은 포인트 ${54 - sum}`;
+    }
+    if (step === "confirm") renderCharacterSheetPreview();
+  }
+
+  function openCharacterCreation() {
+    gameState = GAME_STATE.CHARACTER_CREATION;
+    ui.titleScreen.classList.add("hidden");
+    ui.characterCreation.classList.remove("hidden");
+    ui.inner.classList.add("hidden");
+    applyGameplayVisibility(false);
+    input.setEnabled(false);
+    renderCharacterCreation();
+  }
+
+  function startNewGame() {
+    Object.assign(characterForm, resetCharacterCreationForm());
+    ui.ccError.textContent = "";
+    renderCharacterCreation();
+    openCharacterCreation();
+  }
+
+  function applyCreatedCharacterToProgression(created) {
+    progression.profile = { ...created.profile };
+    progression.mantra = created.mantra.name;
+    progression.originalMana = { ...created.originalMana };
+    progression.level = 1;
+    progression.floor = 1;
+    progression.coins = 0;
+    progression.statPoints = 0;
+    progression.multiCastingCount = 1;
+    progression.inventory.externalManualCount = 0;
+    progression.inventory.internalManualCount = 0;
+    progression.inventory.swordEnergyCount = 0;
+    progression.inventory.spellBooks = [];
+    progression.inventory.magicList = [];
+    progression.inventory.skillResetTicketCount = 0;
+    progression.swordStage = 0;
+    progression.skills = createSkillState();
+    setSkillPlayerContext(progression);
+
+    progression.growth.state.baseStats = { ...created.baseStats };
+    progression.growth.recalculate(0);
+    progression.growth.state.officialDerivedStats = { ...created.officialDerivedStats };
+    progression.hp = created.hp;
+    progression.mp = created.mp;
+  }
+
+  function enterFirstFloor() {
+    if (gameState !== GAME_STATE.CHARACTER_CONFIRM) return;
+    ui.characterCreation.classList.add("hidden");
+    applyGameplayVisibility(true);
+    input.setEnabled(true);
+    battle.setupForFloor(progression.floor);
+    const floorMap = mapManager.showFloorCombatMap(battle.getEnemyDescriptor(), { floor: progression.floor, level: progression.level });
+    battle.setArenaRadius(floorMap.bounds?.arenaRadius || 8.2);
+    camera.radius = 11;
+    camera.beta = Math.PI / 3.2;
+    gameState = GAME_STATE.FLOOR_COMBAT;
+    gameMode = MAP_STATE.FLOOR_COMBAT;
+  }
+  window.startNewGame = startNewGame;
+  window.openCharacterCreation = openCharacterCreation;
+  window.enterFirstFloor = enterFirstFloor;
 
   function enterInnerWorld() {
     if (progression.innerWorld.rewardGranted) return;
@@ -692,8 +870,10 @@ function createScene() {
     battle.despawnEnemy();
 
     input.setEnabled(false);
+    applyGameplayVisibility(false);
     ui.inner.classList.remove("hidden");
     gameMode = MAP_STATE.INNER_WORLD;
+    gameState = GAME_STATE.INNER_WORLD;
     mapManager.showInnerWorldMap({ floor: progression.floor, level: progression.level });
     camera.radius = 16;
     camera.beta = Math.PI / 2.8;
@@ -709,10 +889,12 @@ function createScene() {
     progression.innerWorld.rewardGranted = false;
     ui.inner.classList.add("hidden");
     input.setEnabled(true);
+    applyGameplayVisibility(true);
     battle.setupForFloor(progression.floor);
     const floorMap = mapManager.showFloorCombatMap(battle.getEnemyDescriptor(), { floor: progression.floor, level: progression.level });
     battle.setArenaRadius(floorMap.bounds?.arenaRadius || 8.2);
     gameMode = MAP_STATE.FLOOR_COMBAT;
+    gameState = GAME_STATE.FLOOR_COMBAT;
     camera.radius = 11;
     camera.beta = Math.PI / 3.2;
   }
@@ -850,6 +1032,134 @@ function createScene() {
     }
   }
 
+  CHARACTER_CREATION_STAT_KEYS.forEach((key) => {
+    const row = document.createElement("div");
+    const label = document.createElement("label");
+    label.textContent = `${CHARACTER_CREATION_STAT_LABELS[key]} `;
+    const inputEl = document.createElement("input");
+    inputEl.type = "number";
+    inputEl.min = "0";
+    inputEl.step = "1";
+    inputEl.value = "0";
+    inputEl.addEventListener("input", () => {
+      const n = Number(inputEl.value);
+      characterForm.statAllocation[key] = Number.isInteger(n) && n >= 0 ? n : 0;
+      renderCharacterCreation();
+    });
+    row.appendChild(label);
+    row.appendChild(inputEl);
+    ui.ccStatInputs.appendChild(row);
+  });
+
+  MANTRA_PRESETS.forEach((name) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = name;
+    b.addEventListener("click", () => {
+      ui.mantraNameInput.value = name;
+      characterForm.mantra.name = name;
+    });
+    ui.mantraPresetButtons.appendChild(b);
+  });
+  ORIGINAL_MANA_PRESETS.forEach((name) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = name;
+    b.addEventListener("click", () => {
+      ui.manaNameInput.value = name;
+      characterForm.originalMana.name = name;
+    });
+    ui.manaPresetButtons.appendChild(b);
+  });
+
+  ui.startGameBtn.addEventListener("click", () => startNewGame());
+  ui.continueGameBtn.addEventListener("click", () => {
+    const loaded = loadCharacter();
+    if (!loaded) return;
+    applyCreatedCharacterToProgression(loaded);
+    enterFirstFloor();
+  });
+  ui.continueGameBtn.disabled = !hasSavedCharacter();
+
+  ui.ccBackBtn.addEventListener("click", () => {
+    if (characterForm.stepIndex <= 0) return;
+    characterForm.stepIndex -= 1;
+    ui.ccError.textContent = "";
+    if (CHARACTER_CREATION_STEPS[characterForm.stepIndex] === "confirm") {
+      gameState = GAME_STATE.CHARACTER_CONFIRM;
+    } else {
+      gameState = GAME_STATE.CHARACTER_CREATION;
+    }
+    renderCharacterCreation();
+  });
+
+  ui.ccNextBtn.addEventListener("click", () => {
+    const step = CHARACTER_CREATION_STEPS[characterForm.stepIndex];
+    ui.ccError.textContent = "";
+    if (step === "name") {
+      characterForm.profile.name = ui.charNameInput.value.trim();
+      characterForm.profile.gender = ui.charGenderInput.value.trim();
+      if (!validateCharacterName(characterForm)) {
+        ui.ccError.textContent = "이름을 입력해야 합니다.";
+        return;
+      }
+    } else if (step === "stats") {
+      if (!validateStatAllocation(characterForm)) {
+        ui.ccError.textContent = "능력치 합계가 정확히 54여야 합니다.";
+        return;
+      }
+    } else if (step === "mantra") {
+      characterForm.mantra.name = ui.mantraNameInput.value.trim();
+      characterForm.mantra.category = ui.mantraCategoryInput.value.trim();
+      characterForm.mantra.description = ui.mantraDescInput.value.trim();
+      if (!characterForm.mantra.name) {
+        ui.ccError.textContent = "만트라를 입력 또는 선택하세요.";
+        return;
+      }
+    } else if (step === "originalMana") {
+      characterForm.originalMana.name = ui.manaNameInput.value.trim();
+      characterForm.originalMana.type = ui.manaTypeInput.value.trim();
+      characterForm.originalMana.description = ui.manaDescInput.value.trim();
+      if (!characterForm.originalMana.name) {
+        ui.ccError.textContent = "오리지널 마나를 입력 또는 선택하세요.";
+        return;
+      }
+    } else if (step === "lore") {
+      characterForm.profile.worldDestructionCause = ui.worldCauseInput.value.trim();
+      characterForm.profile.destroyer = ui.destroyerInput.value.trim();
+      characterForm.profile.finalMoment = ui.finalMomentInput.value.trim();
+      characterForm.profile.goal = ui.goalInput.value.trim();
+      if (!characterForm.profile.worldDestructionCause || !characterForm.profile.destroyer || !characterForm.profile.finalMoment || !characterForm.profile.goal) {
+        ui.ccError.textContent = "세계관 입력 항목을 모두 채워야 합니다.";
+        return;
+      }
+    }
+    characterForm.stepIndex = Math.min(characterForm.stepIndex + 1, CHARACTER_CREATION_STEPS.length - 1);
+    if (CHARACTER_CREATION_STEPS[characterForm.stepIndex] === "confirm") {
+      gameState = GAME_STATE.CHARACTER_CONFIRM;
+    }
+    renderCharacterCreation();
+  });
+
+  ui.ccEditBtn.addEventListener("click", () => {
+    characterForm.stepIndex = 0;
+    gameState = GAME_STATE.CHARACTER_CREATION;
+    renderCharacterCreation();
+  });
+
+  ui.enterFloorBtn.addEventListener("click", () => {
+    const result = confirmCharacter(characterForm);
+    if (!result.ok) {
+      ui.ccError.textContent = "캐릭터 생성 항목이 누락되었습니다.";
+      return;
+    }
+    const created = createPlayerFromCharacterForm(characterForm);
+    applyCreatedCharacterToProgression(created);
+    saveCharacter(created);
+    ui.continueGameBtn.disabled = !hasSavedCharacter();
+    enterFirstFloor();
+  });
+
   ui.rerollBtn.addEventListener("click", () => {
     if (progression.coins <= 0 || progression.innerWorld.step !== "reward") return;
     progression.coins -= 1;
@@ -973,6 +1283,11 @@ function createScene() {
     progression.equippedMagicId = magicSelect.value || null;
   });
   refreshMagicSelect();
+  applyGameplayVisibility(false);
+  input.setEnabled(false);
+  ui.inner.classList.add("hidden");
+  ui.characterCreation.classList.add("hidden");
+  ui.titleScreen.classList.remove("hidden");
 
 
   scene.onBeforeRenderObservable.add(() => {
@@ -1061,6 +1376,7 @@ function createScene() {
     } else if (gameMode === MAP_STATE.FLOOR_COMBAT && battle.getPhase() === "defeat") {
       hud.battleMessage.textContent = "패배";
       input.setEnabled(false);
+      gameState = GAME_STATE.GAME_OVER;
     } else {
       hud.battleMessage.textContent = "";
     }
