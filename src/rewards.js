@@ -6,15 +6,6 @@
     return { manualType: "sword", name: "검기", desc: "사용 시 검기 단계 +1" };
   }
 
-  function rollSpellBookGrade() {
-    const r = Math.random();
-    if (r < 0.55) return "기초";
-    if (r < 0.85) return "중급";
-    if (r < 0.97) return "고급";
-    if (r < 0.99) return "멀티케스팅의 서";
-    return "마도서";
-  }
-
   function generateReward() {
     const roll = Math.random();
 
@@ -24,7 +15,7 @@
     }
 
     if (roll < 0.3) {
-      const grade = rollSpellBookGrade();
+      const grade = global.rollSpellBookGrade();
       return { type: "spellBook", name: "마법서", desc: `${grade} 마법서 획득`, payload: { grade } };
     }
 

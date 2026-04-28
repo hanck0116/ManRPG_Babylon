@@ -1,47 +1,62 @@
 (function initSpellBooks(global) {
-  const SPELL_TABLE = {
-    기초: ["파이어 스파크", "아쿠아 샷", "윈드 컷"],
-    중급: ["파이어 볼", "아이스 스피어", "썬더 랜스"],
-    고급: ["메테오 샤드", "글레이셜 스톰"],
-  };
+  function rollSpellBookGrade() {
+    const r = Math.random() * 100;
+    if (r < 50) return "기초";
+    if (r < 80) return "중급";
+    if (r < 90) return "고급";
+    if (r < 99) return "멀티케스팅의 서";
+    return "마도서";
+  }
 
-  const HIGH_TIER_MAGIC_POOL = [
-    { name: "7서클: 대폭염", circle: 7 },
-    { name: "8서클: 시공 붕괴", circle: 8 },
-    { name: "9서클: 성운 소환", circle: 9 },
-    { name: "10서클: 무한소멸", circle: 10 },
-  ];
+  function rollCircleByGrade(grade) {
+    if (grade === "기초") return Math.random() < 0.5 ? 1 : 2;
+    if (grade === "중급") return Math.random() < 0.5 ? 3 : 4;
+    if (grade === "고급") return Math.random() < 0.5 ? 5 : 6;
+    if (grade === "마도서") {
+      while (true) {
+        const r = 7 + Math.floor(Math.random() * 4); // 7~10
+        if (r === 10 && global.magicData.getSpellsByCircle(10).length === 0) continue;
+        return r;
+      }
+    }
+    return 0;
+  }
+
+  function rollDiceByGrade(grade) {
+    const max = grade === "기초" ? 50 : grade === "중급" ? 70 : 100;
+    return Math.floor(Math.random() * max) + 1;
+  }
 
   function attemptLearnSpellBook(player, inventory) {
     const idx = inventory.spellBooks.findIndex((b) => !b.used);
     if (idx < 0) return { ok: false, reason: "no_book" };
 
-    const target = inventory.spellBooks[idx];
-    target.used = true;
+    const book = inventory.spellBooks[idx];
+    book.used = true;
 
-    if (target.grade === "멀티케스팅의 서") {
-      return { ok: true, special: true };
+    if (book.grade === "멀티케스팅의 서") {
+      player.multiCastingCount += 1;
+      return { ok: true, multi: true };
     }
 
-    if (target.grade === "마도서") {
-      const high = HIGH_TIER_MAGIC_POOL[Math.floor(Math.random() * HIGH_TIER_MAGIC_POOL.length)];
-      inventory.magicList.push({ name: high.name, grade: target.grade, circle: high.circle });
-      return { ok: true, highTier: true, spellName: high.name };
-    }
+    const circle = rollCircleByGrade(book.grade);
+    const candidates = global.magicData.getSpellsByCircle(circle);
+    if (!candidates.length) return { ok: false, reason: "no_spell_in_circle", circle };
 
-    const diceMax = target.grade === "기초" ? 50 : target.grade === "중급" ? 70 : 100;
-    const roll = Math.floor(Math.random() * diceMax) + 1;
+    const roll = rollDiceByGrade(book.grade);
     const wisdom = player.growth.state.baseStats.wisdom;
+    const picked = candidates[Math.floor(Math.random() * candidates.length)];
 
     if (roll < wisdom) {
-      const pool = SPELL_TABLE[target.grade] || ["미확인 주문"];
-      const spellName = pool[Math.floor(Math.random() * pool.length)];
-      inventory.magicList.push({ name: spellName, grade: target.grade });
-      return { ok: true, roll, spellName };
+      if (!inventory.magicList.find((m) => m.id === picked.id)) {
+        inventory.magicList.push({ ...picked });
+      }
+      return { ok: true, roll, spellName: picked.name, circle };
     }
 
-    return { ok: false, roll };
+    return { ok: false, roll, circle };
   }
 
+  global.rollSpellBookGrade = rollSpellBookGrade;
   global.attemptLearnSpellBook = attemptLearnSpellBook;
 })(window);

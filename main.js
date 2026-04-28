@@ -30,22 +30,9 @@ function createProgressionState() {
     statPoints: 0,
     coins: 0,
     swordStage: 0,
+    multiCastingCount: 0,
+    equippedMagicId: null,
     mantra: "화염",
-    spellSlots: {
-      equipped: "firebolt",
-      known: [
-        {
-          id: "firebolt",
-          name: "화염구",
-          mantra: "화염",
-          mpCost: 14,
-          damageScale: 1.25,
-          speed: 16,
-          radius: 0.18,
-          range: 14,
-        },
-      ],
-    },
     growth,
     inventory: createInventoryState(),
     currentRewards: [],
@@ -327,16 +314,47 @@ function createBattleSystem(scene, player, progression) {
     if (playerState.hp <= 0) { battle.phase = "defeat"; combatState = COMBAT_STATE.PLAYER_DEAD; lockOnActive = false; }
   }
   function castMagic() {
-    const spell = progression.spellSlots.known.find((s) => s.id === progression.spellSlots.equipped);
-    if (!spell || !enemy) return;
+    const spell = progression.inventory.magicList.find((s) => s.id === progression.equippedMagicId);
+    if (!spell) { playerState.feedback = "장착 마법 없음"; playerState.feedbackTimer = 0.2; return; }
     if (playerState.mp < spell.mpCost) { playerState.feedback = "MP 부족"; playerState.feedbackTimer = 0.2; return; }
     playerState.mp -= spell.mpCost; playerState.feedback = "마법"; playerState.feedbackTimer = 0.2;
     const forward = getFacing(player);
-    const b = BABYLON.MeshBuilder.CreateSphere(`magic_${Date.now()}`, { diameter: spell.radius * 2 }, scene);
-    b.position = player.position.add(forward.scale(0.9)).add(new BABYLON.Vector3(0, 0.6, 0));
-    const m = new BABYLON.StandardMaterial(`magicMat_${Date.now()}`, scene); m.emissiveColor = new BABYLON.Color3(1, 0.45, 0.18); b.material = m;
-    const magicDamage = progression.growth.state.derivedStats.magicDamage || playerState.attackDamage;
-    projectileState.push({ mesh: b, dir: forward, speed: spell.speed, remain: spell.range, damage: magicDamage * spell.damageScale });
+    const magicBase = (spell.damage || 0) + (progression.growth.state.derivedStats.magicDamage || 0) + progression.growth.state.baseStats.intelligence * 2;
+
+    if (spell.type === "heal") {
+      playerState.hp = Math.min(playerState.maxHp, playerState.hp + 120);
+      return;
+    }
+    if (spell.type === "shield") {
+      playerState.guardHeld = true;
+      playerState.feedback = "보호막";
+      return;
+    }
+    if (spell.type === "movement") {
+      player.position.addInPlace(forward.scale(2.4));
+      clampInsideArena(player.position);
+      return;
+    }
+    if (spell.type === "instant") {
+      if (enemy) dealDamageToEnemy(magicBase);
+      return;
+    }
+
+    if (spell.type === "projectile" || spell.type === "summon") {
+      const b = BABYLON.MeshBuilder.CreateSphere(`magic_${Date.now()}`, { diameter: 0.32 }, scene);
+      b.position = player.position.add(forward.scale(0.9)).add(new BABYLON.Vector3(0, 0.6, 0));
+      const m = new BABYLON.StandardMaterial(`magicMat_${Date.now()}`, scene); m.emissiveColor = new BABYLON.Color3(1, 0.45, 0.18); b.material = m;
+      projectileState.push({ mesh: b, dir: forward, speed: 14, remain: 14, damage: magicBase });
+      return;
+    }
+
+    // area/beam/field/debuff/buff 기본 처리: 전방 범위 타격 또는 상태효과 틀
+    if (enemy) {
+      const toEnemy = enemy.position.subtract(player.position); toEnemy.y = 0;
+      if (toEnemy.length() <= 4.2) {
+        dealDamageToEnemy(magicBase * 0.9);
+      }
+    }
   }
 
   return {
@@ -410,7 +428,11 @@ function createBattleSystem(scene, player, progression) {
     getCombatState() { return combatState; },
     toggleLockOn() { if (enemy && enemyState.hp > 0) lockOnActive = !lockOnActive; else lockOnActive = false; return lockOnActive; },
     isLockOnActive() { return lockOnActive; },
-    getCooldownState() { return { attack: playerState.attackCooldown <= 0, dodge: playerState.dodgeCooldown <= 0 && !playerState.dodging, magic: playerState.magicCooldown <= 0 && playerState.mp >= 14 }; },
+    getCooldownState() {
+      const equipped = progression.inventory.magicList.find((s) => s.id === progression.equippedMagicId);
+      const mpCost = equipped ? equipped.mpCost : 99999;
+      return { attack: playerState.attackCooldown <= 0, dodge: playerState.dodgeCooldown <= 0 && !playerState.dodging, magic: playerState.magicCooldown <= 0 && playerState.mp >= mpCost };
+    },
     setPlayerEmissive(playerMat) {
       if (playerState.dodging) playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.9, 1);
       else if (playerState.guardHeld) playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.45, 1);
@@ -468,6 +490,7 @@ function createScene() {
     enemyHp: document.getElementById("enemyHp"),
     mantraInfo: document.getElementById("mantraInfo"),
     spellInfo: document.getElementById("spellInfo"),
+    magicCooldownInfo: document.getElementById("magicCooldownInfo"),
     manualInfo: document.getElementById("manualInfo"),
     swordStageInfo: document.getElementById("swordStageInfo"),
     battleMessage: document.getElementById("battleMessage"),
@@ -492,6 +515,8 @@ function createScene() {
     manualDoneBtn: document.getElementById("manualDoneBtn"),
     spellBookPanel: document.getElementById("spellBookPanel"),
     spellBookList: document.getElementById("spellBookList"),
+    learnResult: document.getElementById("learnResult"),
+    learnedMagicList: document.getElementById("learnedMagicList"),
     learnSpellBtn: document.getElementById("learnSpellBtn"),
     extraLearnBtn: document.getElementById("extraLearnBtn"),
     spellBookDoneBtn: document.getElementById("spellBookDoneBtn"),
@@ -506,6 +531,7 @@ function createScene() {
     sellSwordBtn: document.getElementById("sellSwordBtn"),
     shopDoneBtn: document.getElementById("shopDoneBtn"),
   };
+  const magicSelect = document.getElementById("magicSelect");
 
   function enterInnerWorld() {
     if (progression.innerWorld.rewardGranted) return;
@@ -642,8 +668,27 @@ function createScene() {
     }
     if (step === "spellBook") {
       ui.spellBookList.textContent = progression.inventory.spellBooks.length
-        ? progression.inventory.spellBooks.map((b, i) => `${i + 1}. ${b.grade}${b.learned ? "(습득완료)" : ""}`).join(" | ")
+        ? progression.inventory.spellBooks.map((b, i) => `${i + 1}. ${b.grade}${b.used ? "(사용됨)" : ""}`).join(" | ")
         : "없음";
+      ui.learnedMagicList.textContent = progression.inventory.magicList.length
+        ? `습득 마법: ${progression.inventory.magicList.map((m) => m.name).join(", ")}`
+        : "습득 마법 없음";
+    }
+  }
+
+  function refreshMagicSelect() {
+    magicSelect.innerHTML = "";
+    progression.inventory.magicList.forEach((spell) => {
+      const op = document.createElement("option");
+      op.value = spell.id;
+      op.textContent = `${spell.name} (${spell.circle}서클)`;
+      magicSelect.appendChild(op);
+    });
+    if (!progression.equippedMagicId && progression.inventory.magicList[0]) {
+      progression.equippedMagicId = progression.inventory.magicList[0].id;
+    }
+    if (progression.equippedMagicId) {
+      magicSelect.value = progression.equippedMagicId;
     }
   }
 
@@ -685,7 +730,9 @@ function createScene() {
 
   ui.learnSpellBtn.addEventListener("click", () => {
     if (progression.innerWorld.step !== "spellBook") return;
-    attemptLearnSpellBook(progression, progression.inventory, false);
+    const result = attemptLearnSpellBook(progression, progression.inventory, false);
+    ui.learnResult.textContent = result.ok ? `성공: ${result.spellName || "효과 적용"}` : "실패";
+    refreshMagicSelect();
     renderInnerWorld();
   });
 
@@ -693,7 +740,9 @@ function createScene() {
     if (progression.innerWorld.step !== "spellBook") return;
     if (progression.coins <= 0) return;
     progression.coins -= 1;
-    attemptLearnSpellBook(progression, progression.inventory, true);
+    const result = attemptLearnSpellBook(progression, progression.inventory, true);
+    ui.learnResult.textContent = result.ok ? `성공: ${result.spellName || "효과 적용"}` : "실패";
+    refreshMagicSelect();
     renderInnerWorld();
   });
 
@@ -731,6 +780,11 @@ function createScene() {
     if (progression.innerWorld.step !== "next") return;
     leaveInnerWorldToNextFloor();
   });
+
+  magicSelect.addEventListener("change", () => {
+    progression.equippedMagicId = magicSelect.value || null;
+  });
+  refreshMagicSelect();
 
 
   scene.onBeforeRenderObservable.add(() => {
@@ -796,8 +850,9 @@ function createScene() {
         ? `적 HP: ${Math.ceil(eState.hp)} / ${Math.ceil(eState.maxHp)}`
         : "적 HP: -";
     hud.mantraInfo.textContent = `만트라: ${progression.mantra}`;
-    const equippedSpell = progression.spellSlots.known.find((s) => s.id === progression.spellSlots.equipped);
+    const equippedSpell = progression.inventory.magicList.find((s) => s.id === progression.equippedMagicId);
     hud.spellInfo.textContent = `마법: ${equippedSpell ? equippedSpell.name : "-"}`;
+    hud.magicCooldownInfo.textContent = `마법 쿨타임: ${Math.max(0, pState.magicCooldown || 0).toFixed(1)}s`;
     hud.manualInfo.textContent = `외공서 ${progression.inventory.externalManualCount} | 내공서 ${progression.inventory.internalManualCount} | 검기 ${progression.inventory.swordEnergyCount}`;
     const swordData = SWORD_STAGE_DATA[progression.swordStage] || SWORD_STAGE_DATA[0];
     hud.swordStageInfo.textContent = `검기 단계: ${swordData.name} (${progression.swordStage})`;
