@@ -1,7 +1,7 @@
 const canvas = document.getElementById("gameCanvas");
 const engine = new BABYLON.Engine(canvas, true);
 
-const CONFIG = {
+  const CONFIG = {
   player: {
     maxHp: 100,
     moveSpeed: 4.5,
@@ -24,7 +24,7 @@ const CONFIG = {
     rotationSpeed: 8,
     chaseRange: 8,
     attackRange: 1.6,
-    attackAngleDotMin: 0.2,
+    attackAngleDotMin: -1,
     attackDamage: 14,
     attackDuration: 0.26,
     attackCooldown: 1.2,
@@ -84,7 +84,6 @@ function createInputController(scene) {
 
     button.addEventListener("pointerup", stop);
     button.addEventListener("pointercancel", stop);
-    button.addEventListener("pointerleave", stop);
   }
 
   function resetJoystick() {
@@ -136,7 +135,6 @@ function createInputController(scene) {
 
   joystickRoot.addEventListener("pointerup", stopJoystick);
   joystickRoot.addEventListener("pointercancel", stopJoystick);
-  joystickRoot.addEventListener("pointerleave", stopJoystick);
   resetJoystick();
 
   bindTapButton(
@@ -262,6 +260,16 @@ function createBattleSystem(player, enemy, input) {
   const gameState = {
     phase: "playing", // playing | clear | defeat
   };
+  const fxState = {
+    feedbackText: "",
+    feedbackTimer: 0,
+    playerAttackFxTimer: 0,
+  };
+
+  function triggerFeedback(text, duration = 0.25) {
+    fxState.feedbackText = text;
+    fxState.feedbackTimer = duration;
+  }
 
   function getFacing(mesh) {
     if (!mesh.rotationQuaternion) mesh.rotationQuaternion = BABYLON.Quaternion.Identity();
@@ -345,6 +353,8 @@ function createBattleSystem(player, enemy, input) {
         playerState.attackTimer = CONFIG.player.attackDuration;
         playerState.attackCooldown = CONFIG.player.attackCooldown;
         playerState.attackHitDone = false;
+        fxState.playerAttackFxTimer = 0.14;
+        triggerFeedback("공격!");
       }
 
       if (triggers.dodge && !playerState.isDodging && playerState.dodgeCooldown <= 0) {
@@ -358,6 +368,11 @@ function createBattleSystem(player, enemy, input) {
         } else {
           playerState.dodgeDirection.copyFrom(getFacing(player));
         }
+        triggerFeedback("회피!");
+      }
+
+      if (playerState.isGuarding) {
+        triggerFeedback("가드", 0.1);
       }
 
       if (playerState.attackTimer > 0) {
@@ -408,6 +423,12 @@ function createBattleSystem(player, enemy, input) {
         enemyState.attackTimer -= deltaSeconds;
         tryEnemyAttackHit();
       }
+
+      fxState.feedbackTimer = Math.max(0, fxState.feedbackTimer - deltaSeconds);
+      if (fxState.feedbackTimer <= 0) {
+        fxState.feedbackText = "";
+      }
+      fxState.playerAttackFxTimer = Math.max(0, fxState.playerAttackFxTimer - deltaSeconds);
     },
 
     getUiState() {
@@ -417,6 +438,7 @@ function createBattleSystem(player, enemy, input) {
         enemyHp: Math.ceil(enemyState.hp),
         enemyMaxHp: CONFIG.enemy.maxHp,
         phase: gameState.phase,
+        feedbackText: fxState.feedbackText,
       };
     },
 
@@ -426,6 +448,16 @@ function createBattleSystem(player, enemy, input) {
 
     isPlayerGuarding() {
       return playerState.isGuarding;
+    },
+
+    getFxState() {
+      return {
+        playerAttacking: playerState.attackTimer > 0,
+        playerDodging: playerState.isDodging,
+        playerGuarding: playerState.isGuarding,
+        enemyAttacking: enemyState.attackTimer > 0,
+        playerAttackFxTimer: fxState.playerAttackFxTimer,
+      };
     },
   };
 }
@@ -502,10 +534,16 @@ function createScene() {
   const player = BABYLON.MeshBuilder.CreateCapsule("player", { height: 2, radius: 0.4 }, scene);
   player.position.y = 1;
   player.rotationQuaternion = BABYLON.Quaternion.Identity();
+  const playerMat = new BABYLON.StandardMaterial("playerMat", scene);
+  playerMat.diffuseColor = new BABYLON.Color3(0.9, 0.9, 1);
+  player.material = playerMat;
 
   const enemy = BABYLON.MeshBuilder.CreateCapsule("enemy", { height: 2, radius: 0.4 }, scene);
   enemy.position = new BABYLON.Vector3(0, 1, 5);
   enemy.rotationQuaternion = BABYLON.Quaternion.Identity();
+  const enemyMat = new BABYLON.StandardMaterial("enemyMat", scene);
+  enemyMat.diffuseColor = new BABYLON.Color3(1, 0.65, 0.65);
+  enemy.material = enemyMat;
 
   const input = createInputController(scene);
   const battleSystem = createBattleSystem(player, enemy, input);
@@ -514,6 +552,7 @@ function createScene() {
   const playerHpEl = document.getElementById("playerHp");
   const enemyHpEl = document.getElementById("enemyHp");
   const battleMessageEl = document.getElementById("battleMessage");
+  const actionFeedbackEl = document.getElementById("actionFeedback");
 
   scene.onBeforeRenderObservable.add(() => {
     const deltaSeconds = engine.getDeltaTime() / 1000;
@@ -521,8 +560,24 @@ function createScene() {
     camera.setTarget(player.position);
 
     const ui = battleSystem.getUiState();
+    const fx = battleSystem.getFxState();
     playerHpEl.textContent = `플레이어 HP: ${ui.playerHp} / ${ui.playerMaxHp}`;
     enemyHpEl.textContent = `적 HP: ${ui.enemyHp} / ${ui.enemyMaxHp}`;
+    actionFeedbackEl.textContent = ui.feedbackText;
+
+    if (fx.playerDodging) {
+      playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.9, 1);
+    } else if (fx.playerGuarding) {
+      playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.45, 1);
+    } else if (fx.playerAttacking || fx.playerAttackFxTimer > 0) {
+      playerMat.emissiveColor = new BABYLON.Color3(1, 0.45, 0.2);
+    } else {
+      playerMat.emissiveColor = BABYLON.Color3.Black();
+    }
+
+    enemyMat.emissiveColor = fx.enemyAttacking
+      ? new BABYLON.Color3(1, 0.2, 0.2)
+      : BABYLON.Color3.Black();
 
     if (ui.phase === "clear") battleMessageEl.textContent = "층 클리어";
     else if (ui.phase === "defeat") battleMessageEl.textContent = "패배";

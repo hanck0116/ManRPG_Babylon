@@ -65,6 +65,13 @@ html, body {
   font-weight: bold;
 }
 
+#actionFeedback {
+  margin-top: 6px;
+  font-size: 18px;
+  font-weight: bold;
+  color: #7dd3fc;
+}
+
 #actionButtons {
   position: fixed;
   right: 20px;
