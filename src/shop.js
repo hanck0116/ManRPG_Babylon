@@ -1,34 +1,37 @@
 (function initShop(global) {
   function buyShopItem(state, key) {
     if (!state?.canTrade) return false;
-    if (key === "buy_hp_pack" && state.progression.coins >= 1) {
-      state.progression.coins -= 1;
-      state.inventory.hpPotion += 2;
-      return true;
-    }
-    if (key === "buy_mp_pack" && state.progression.coins >= 1) {
-      state.progression.coins -= 1;
-      state.inventory.mpPotion += 2;
-      return true;
-    }
+    const p = state.progression;
+    const inv = state.inventory;
+
+    if (key === "buy_external" && p.coins >= 10) { p.coins -= 10; inv.externalManualCount += 1; return true; }
+    if (key === "buy_internal" && p.coins >= 10) { p.coins -= 10; inv.internalManualCount += 1; return true; }
+    if (key === "buy_sword" && p.coins >= 30) { p.coins -= 30; inv.swordEnergyCount += 1; return true; }
+    if (key === "buy_ticket" && p.coins >= 8) { p.coins -= 8; inv.martialManualTicket += 1; return true; }
+
     return false;
   }
 
   function sellShopItem(state, key) {
     if (!state?.canTrade) return false;
-    if (key === "sell_hp_3" && state.inventory.hpPotion >= 3) {
-      state.inventory.hpPotion -= 3;
-      state.progression.coins += 1;
-      return true;
-    }
-    if (key === "sell_mp_3" && state.inventory.mpPotion >= 3) {
-      state.inventory.mpPotion -= 3;
-      state.progression.coins += 1;
-      return true;
-    }
+    const p = state.progression;
+    const inv = state.inventory;
+
+    if (key === "sell_external" && inv.externalManualCount >= 1) { inv.externalManualCount -= 1; p.coins += 5; return true; }
+    if (key === "sell_internal" && inv.internalManualCount >= 1) { inv.internalManualCount -= 1; p.coins += 5; return true; }
+    if (key === "sell_sword" && inv.swordEnergyCount >= 1) { inv.swordEnergyCount -= 1; p.coins += 12; return true; }
+
     return false;
+  }
+
+  function drawMartialManualTicket(state) {
+    if (!state?.canTrade) return null;
+    if (state.inventory.martialManualTicket <= 0) return null;
+    state.inventory.martialManualTicket -= 1;
+    return global.generateMartialManual();
   }
 
   global.buyShopItem = buyShopItem;
   global.sellShopItem = sellShopItem;
+  global.drawMartialManualTicket = drawMartialManualTicket;
 })(window);

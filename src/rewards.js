@@ -1,61 +1,9 @@
 (function initRewards(global) {
-  const REWARD_TYPES = [
-    { type: "inheritance", weight: 10 },
-    { type: "spellBook", weight: 30 },
-    { type: "mpPotion", weight: 30 },
-    { type: "hpPotion", weight: 30 },
-  ];
-
-  function rollByWeight() {
-    const roll = Math.random() * 100;
-    let acc = 0;
-    for (const item of REWARD_TYPES) {
-      acc += item.weight;
-      if (roll < acc) return item.type;
-    }
-    return "hpPotion";
-  }
-
-  function generateReward(enemyData = {}) {
-    const type = rollByWeight();
-
-    if (type === "inheritance") {
-      const skills = enemyData.patternSkills || enemyData.skills || [
-        { id: "enemy_slash", name: "적 베기", power: 10, cooldown: 1.0, range: 1.5 },
-        { id: "enemy_dash", name: "적 돌진", power: 12, cooldown: 1.6, range: 2.2 },
-      ];
-      const picked = skills[Math.floor(Math.random() * skills.length)];
-      return {
-        type,
-        name: "전승",
-        desc: `적 스킬 전승 후보: ${picked.name}`,
-        payload: {
-          sourceSkill: picked,
-          weakened: {
-            id: `${picked.id}_inherited`,
-            name: `${picked.name}(전승)` ,
-            power: Math.max(1, Math.floor((picked.power || 10) * 0.6)),
-            cooldown: (picked.cooldown || 1.0) * 1.35,
-            range: (picked.range || 1.5) * 0.85,
-          },
-        },
-      };
-    }
-
-    if (type === "spellBook") {
-      return {
-        type,
-        name: "마법서",
-        desc: "마법서 1권 획득",
-        payload: { grade: rollSpellBookGrade() },
-      };
-    }
-
-    if (type === "mpPotion") {
-      return { type, name: "마나 포션", desc: "MP 포션 +1", payload: { amount: 1 } };
-    }
-
-    return { type: "hpPotion", name: "체력 포션", desc: "HP 포션 +1", payload: { amount: 1 } };
+  function generateMartialManual() {
+    const r = Math.random();
+    if (r < 0.4) return { manualType: "external", name: "외공서", desc: "사용 시 최대 체력 x1.2" };
+    if (r < 0.8) return { manualType: "internal", name: "내공서", desc: "사용 시 최대 MP/회복 x1.1" };
+    return { manualType: "sword", name: "검기", desc: "사용 시 검기 단계 +1" };
   }
 
   function rollSpellBookGrade() {
@@ -67,14 +15,35 @@
     return "마도서";
   }
 
-  function generateRewardChoices(enemyData) {
-    return [generateReward(enemyData), generateReward(enemyData)];
+  function generateReward() {
+    const roll = Math.random();
+
+    if (roll < 0.15) {
+      const m = generateMartialManual();
+      return { type: "martialManual", name: m.name, desc: m.desc, payload: m };
+    }
+
+    if (roll < 0.3) {
+      const grade = rollSpellBookGrade();
+      return { type: "spellBook", name: "마법서", desc: `${grade} 마법서 획득`, payload: { grade } };
+    }
+
+    if (roll < 0.7) {
+      return { type: "coin", name: "추가 코인", desc: "코인 +1", payload: { amount: 1 } };
+    }
+
+    return { type: "coin", name: "추가 코인", desc: "코인 +2", payload: { amount: 2 } };
   }
 
-  function rerollRewards(enemyData) {
-    return generateRewardChoices(enemyData);
+  function generateRewardChoices() {
+    return [generateReward(), generateReward()];
   }
 
+  function rerollRewards() {
+    return generateRewardChoices();
+  }
+
+  global.generateMartialManual = generateMartialManual;
   global.generateReward = generateReward;
   global.generateRewardChoices = generateRewardChoices;
   global.rerollRewards = rerollRewards;

@@ -29,6 +29,7 @@ function createProgressionState() {
     level: 1,
     statPoints: 0,
     coins: 0,
+    swordStage: 0,
     mantra: "화염",
     spellSlots: {
       equipped: "firebolt",
@@ -269,7 +270,7 @@ function createBattleSystem(scene, player, progression) {
     target.position.addInPlace(d.scale(dist)); clampInsideArena(target.position);
   }
   function recomputePlayerFromStats() {
-    const d = progression.growth.recalculate();
+    const d = progression.growth.recalculate(progression.swordStage);
     playerState.maxHp = d.maxHp;
     playerState.maxMp = d.maxMp;
     playerState.mpRegen = d.mpRegen;
@@ -410,9 +411,6 @@ function createBattleSystem(scene, player, progression) {
     toggleLockOn() { if (enemy && enemyState.hp > 0) lockOnActive = !lockOnActive; else lockOnActive = false; return lockOnActive; },
     isLockOnActive() { return lockOnActive; },
     getCooldownState() { return { attack: playerState.attackCooldown <= 0, dodge: playerState.dodgeCooldown <= 0 && !playerState.dodging, magic: playerState.magicCooldown <= 0 && playerState.mp >= 14 }; },
-    usePotion(type) {
-      return usePotion(progression.inventory, playerState, type);
-    },
     setPlayerEmissive(playerMat) {
       if (playerState.dodging) playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.9, 1);
       else if (playerState.guardHeld) playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.45, 1);
@@ -470,7 +468,8 @@ function createScene() {
     enemyHp: document.getElementById("enemyHp"),
     mantraInfo: document.getElementById("mantraInfo"),
     spellInfo: document.getElementById("spellInfo"),
-    potionInfo: document.getElementById("potionInfo"),
+    manualInfo: document.getElementById("manualInfo"),
+    swordStageInfo: document.getElementById("swordStageInfo"),
     battleMessage: document.getElementById("battleMessage"),
     actionFeedback: document.getElementById("actionFeedback"),
   };
@@ -485,23 +484,28 @@ function createScene() {
     statList: document.getElementById("statList"),
     statDoneBtn: document.getElementById("statDoneBtn"),
     nextFloorBtn: document.getElementById("nextFloorBtn"),
-    inheritancePanel: document.getElementById("inheritancePanel"),
-    inheritanceSlots: document.getElementById("inheritanceSlots"),
-    inheritanceDoneBtn: document.getElementById("inheritanceDoneBtn"),
+    manualPanel: document.getElementById("manualPanel"),
+    manualCounts: document.getElementById("manualCounts"),
+    useExternalBtn: document.getElementById("useExternalBtn"),
+    useInternalBtn: document.getElementById("useInternalBtn"),
+    useSwordBtn: document.getElementById("useSwordBtn"),
+    manualDoneBtn: document.getElementById("manualDoneBtn"),
     spellBookPanel: document.getElementById("spellBookPanel"),
     spellBookList: document.getElementById("spellBookList"),
     learnSpellBtn: document.getElementById("learnSpellBtn"),
     extraLearnBtn: document.getElementById("extraLearnBtn"),
     spellBookDoneBtn: document.getElementById("spellBookDoneBtn"),
     shopPanel: document.getElementById("shopPanel"),
-    buyHpPotionPackBtn: document.getElementById("buyHpPotionPackBtn"),
-    buyMpPotionPackBtn: document.getElementById("buyMpPotionPackBtn"),
-    sellHpPotionBtn: document.getElementById("sellHpPotionBtn"),
-    sellMpPotionBtn: document.getElementById("sellMpPotionBtn"),
+    buyExternalBtn: document.getElementById("buyExternalBtn"),
+    buyInternalBtn: document.getElementById("buyInternalBtn"),
+    buySwordBtn: document.getElementById("buySwordBtn"),
+    buyTicketBtn: document.getElementById("buyTicketBtn"),
+    drawTicketBtn: document.getElementById("drawTicketBtn"),
+    sellExternalBtn: document.getElementById("sellExternalBtn"),
+    sellInternalBtn: document.getElementById("sellInternalBtn"),
+    sellSwordBtn: document.getElementById("sellSwordBtn"),
     shopDoneBtn: document.getElementById("shopDoneBtn"),
   };
-  const hpPotionBtn = document.getElementById("hpPotionBtn");
-  const mpPotionBtn = document.getElementById("mpPotionBtn");
 
   function enterInnerWorld() {
     if (progression.innerWorld.rewardGranted) return;
@@ -566,7 +570,7 @@ function createScene() {
         if (progression.statPoints <= 0) return;
         progression.growth.state.baseStats[key] += 1;
         progression.statPoints -= 1;
-        progression.growth.recalculate();
+        progression.growth.recalculate(progression.swordStage);
         battle.refreshDerivedStats();
         renderInnerWorld();
       });
@@ -594,17 +598,16 @@ function createScene() {
   }
 
   function selectReward(reward) {
-    if (reward.type === "hpPotion") progression.inventory.hpPotion += 1;
-    else if (reward.type === "mpPotion") progression.inventory.mpPotion += 1;
-    else if (reward.type === "spellBook") progression.inventory.spellBooks.push({ grade: reward.payload.grade, learned: false });
-    else if (reward.type === "inheritance") {
-      const applied = addInheritanceSkill(progression.inventory, reward.payload);
-      if (!applied) {
-        const chooseNone = window.confirm("전승 슬롯 가득 참. 기존 교체 없이 넘어갈까요? 취소 시 1번 슬롯 교체");
-        if (!chooseNone) addInheritanceSkill(progression.inventory, reward.payload, 0);
-      }
+    if (reward.type === "martialManual") {
+      if (reward.payload.manualType === "external") progression.inventory.externalManualCount += 1;
+      if (reward.payload.manualType === "internal") progression.inventory.internalManualCount += 1;
+      if (reward.payload.manualType === "sword") progression.inventory.swordEnergyCount += 1;
+    } else if (reward.type === "spellBook") {
+      progression.inventory.spellBooks.push({ grade: reward.payload.grade, used: false });
+    } else if (reward.type === "coin") {
+      progression.coins += reward.payload.amount;
     }
-    progression.growth.recalculate();
+    progression.growth.recalculate(progression.swordStage);
     battle.refreshDerivedStats();
   }
 
@@ -616,7 +619,7 @@ function createScene() {
         : step === "stats"
           ? "순서 2/6: 스탯 투자"
           : step === "skill"
-            ? "순서 3/6: 전승 확인"
+            ? "순서 3/6: 무공서 사용"
             : step === "spellBook"
               ? "순서 4/6: 마법서 행동"
               : step === "shop"
@@ -627,7 +630,7 @@ function createScene() {
 
     ui.rewardPanel.classList.toggle("hidden", step !== "reward");
     ui.statPanel.classList.toggle("hidden", step !== "stats");
-    ui.inheritancePanel.classList.toggle("hidden", step !== "skill");
+    ui.manualPanel.classList.toggle("hidden", step !== "skill");
     ui.spellBookPanel.classList.toggle("hidden", step !== "spellBook");
     ui.shopPanel.classList.toggle("hidden", step !== "shop");
     ui.nextFloorBtn.classList.toggle("hidden", step !== "next");
@@ -635,9 +638,7 @@ function createScene() {
     if (step === "reward") renderRewardPanel();
     if (step === "stats") renderStatPanel();
     if (step === "skill") {
-      ui.inheritanceSlots.textContent = progression.inventory.inheritanceSlots.length
-        ? progression.inventory.inheritanceSlots.map((s, i) => `${i + 1}. ${s.name}`).join(" | ")
-        : "없음";
+      ui.manualCounts.textContent = `외공서 ${progression.inventory.externalManualCount} / 내공서 ${progression.inventory.internalManualCount} / 검기 ${progression.inventory.swordEnergyCount}`;
     }
     if (step === "spellBook") {
       ui.spellBookList.textContent = progression.inventory.spellBooks.length
@@ -660,7 +661,23 @@ function createScene() {
     renderInnerWorld();
   });
 
-  ui.inheritanceDoneBtn.addEventListener("click", () => {
+  ui.useExternalBtn.addEventListener("click", () => {
+    useMartialManual(progression, progression.inventory, "external");
+    battle.refreshDerivedStats();
+    renderInnerWorld();
+  });
+  ui.useInternalBtn.addEventListener("click", () => {
+    useMartialManual(progression, progression.inventory, "internal");
+    battle.refreshDerivedStats();
+    renderInnerWorld();
+  });
+  ui.useSwordBtn.addEventListener("click", () => {
+    useMartialManual(progression, progression.inventory, "sword");
+    battle.refreshDerivedStats();
+    renderInnerWorld();
+  });
+
+  ui.manualDoneBtn.addEventListener("click", () => {
     if (progression.innerWorld.step !== "skill") return;
     progression.innerWorld.step = "spellBook";
     renderInnerWorld();
@@ -689,10 +706,21 @@ function createScene() {
   function shopCtx() {
     return { canTrade: progression.innerWorld.step === "shop", progression, inventory: progression.inventory };
   }
-  ui.buyHpPotionPackBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_hp_pack"); renderInnerWorld(); });
-  ui.buyMpPotionPackBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_mp_pack"); renderInnerWorld(); });
-  ui.sellHpPotionBtn.addEventListener("click", () => { sellShopItem(shopCtx(), "sell_hp_3"); renderInnerWorld(); });
-  ui.sellMpPotionBtn.addEventListener("click", () => { sellShopItem(shopCtx(), "sell_mp_3"); renderInnerWorld(); });
+  ui.buyExternalBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_external"); renderInnerWorld(); });
+  ui.buyInternalBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_internal"); renderInnerWorld(); });
+  ui.buySwordBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_sword"); renderInnerWorld(); });
+  ui.buyTicketBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_ticket"); renderInnerWorld(); });
+  ui.sellExternalBtn.addEventListener("click", () => { sellShopItem(shopCtx(), "sell_external"); renderInnerWorld(); });
+  ui.sellInternalBtn.addEventListener("click", () => { sellShopItem(shopCtx(), "sell_internal"); renderInnerWorld(); });
+  ui.sellSwordBtn.addEventListener("click", () => { sellShopItem(shopCtx(), "sell_sword"); renderInnerWorld(); });
+  ui.drawTicketBtn.addEventListener("click", () => {
+    const result = drawMartialManualTicket(shopCtx());
+    if (!result) return;
+    if (result.manualType === "external") progression.inventory.externalManualCount += 1;
+    if (result.manualType === "internal") progression.inventory.internalManualCount += 1;
+    if (result.manualType === "sword") progression.inventory.swordEnergyCount += 1;
+    renderInnerWorld();
+  });
   ui.shopDoneBtn.addEventListener("click", () => {
     if (progression.innerWorld.step !== "shop") return;
     progression.innerWorld.step = "next";
@@ -704,12 +732,6 @@ function createScene() {
     leaveInnerWorldToNextFloor();
   });
 
-  hpPotionBtn.addEventListener("click", () => {
-    battle.usePotion("hp");
-  });
-  mpPotionBtn.addEventListener("click", () => {
-    battle.usePotion("mp");
-  });
 
   scene.onBeforeRenderObservable.add(() => {
     const dt = engine.getDeltaTime() / 1000;
@@ -776,7 +798,9 @@ function createScene() {
     hud.mantraInfo.textContent = `만트라: ${progression.mantra}`;
     const equippedSpell = progression.spellSlots.known.find((s) => s.id === progression.spellSlots.equipped);
     hud.spellInfo.textContent = `마법: ${equippedSpell ? equippedSpell.name : "-"}`;
-    hud.potionInfo.textContent = `포션 HP ${progression.inventory.hpPotion} | MP ${progression.inventory.mpPotion}`;
+    hud.manualInfo.textContent = `외공서 ${progression.inventory.externalManualCount} | 내공서 ${progression.inventory.internalManualCount} | 검기 ${progression.inventory.swordEnergyCount}`;
+    const swordData = SWORD_STAGE_DATA[progression.swordStage] || SWORD_STAGE_DATA[0];
+    hud.swordStageInfo.textContent = `검기 단계: ${swordData.name} (${progression.swordStage})`;
     hud.actionFeedback.textContent = pState.feedback;
     input.setActionButtonsState({ ...battle.getCooldownState(), locked: battle.isLockOnActive() });
 

@@ -16,7 +16,8 @@
     <div id="enemyHp">적 HP: 100 / 100</div>
     <div id="mantraInfo">만트라: 화염</div>
     <div id="spellInfo">마법: 화염구</div>
-    <div id="potionInfo">포션 HP 0 | MP 0</div>
+    <div id="manualInfo">외공서 0 | 내공서 0 | 검기 0</div>
+    <div id="swordStageInfo">검기 단계: 없음 (0)</div>
     <div id="battleMessage"></div>
     <div id="actionFeedback"></div>
   </div>
@@ -32,8 +33,6 @@
     <button id="guardBtn" type="button">가드</button>
     <button id="magicBtn" type="button">마법</button>
     <button id="lockBtn" type="button">락온</button>
-    <button id="hpPotionBtn" type="button">HP포션</button>
-    <button id="mpPotionBtn" type="button">MP포션</button>
   </div>
   <div id="innerWorld" class="hidden">
     <h2>심상세계</h2>
@@ -43,10 +42,13 @@
       <div id="rewardChoices"></div>
       <button id="rerollBtn" type="button">리롤(코인 1)</button>
     </div>
-    <div id="inheritancePanel" class="hidden">
-      <h3>전승 슬롯</h3>
-      <div id="inheritanceSlots"></div>
-      <button id="inheritanceDoneBtn" type="button">전승 확인 완료</button>
+    <div id="manualPanel" class="hidden">
+      <h3>무공서</h3>
+      <div id="manualCounts"></div>
+      <button id="useExternalBtn" type="button">외공서 사용</button>
+      <button id="useInternalBtn" type="button">내공서 사용</button>
+      <button id="useSwordBtn" type="button">검기 사용</button>
+      <button id="manualDoneBtn" type="button">무공서 단계 완료</button>
     </div>
     <div id="spellBookPanel" class="hidden">
       <h3>마법서</h3>
@@ -57,10 +59,14 @@
     </div>
     <div id="shopPanel" class="hidden">
       <h3>상점</h3>
-      <button id="buyHpPotionPackBtn" type="button">체력포션 2개 구매(1코인)</button>
-      <button id="buyMpPotionPackBtn" type="button">마나포션 2개 구매(1코인)</button>
-      <button id="sellHpPotionBtn" type="button">체력포션 3개 판매(1코인)</button>
-      <button id="sellMpPotionBtn" type="button">마나포션 3개 판매(1코인)</button>
+      <button id="buyExternalBtn" type="button">외공서 구매(10코인)</button>
+      <button id="buyInternalBtn" type="button">내공서 구매(10코인)</button>
+      <button id="buySwordBtn" type="button">검기 구매(30코인)</button>
+      <button id="buyTicketBtn" type="button">무공서 뽑기권 구매(8코인)</button>
+      <button id="drawTicketBtn" type="button">뽑기권 사용</button>
+      <button id="sellExternalBtn" type="button">외공서 판매(5코인)</button>
+      <button id="sellInternalBtn" type="button">내공서 판매(5코인)</button>
+      <button id="sellSwordBtn" type="button">검기 판매(12코인)</button>
       <button id="shopDoneBtn" type="button">상점 단계 완료</button>
     </div>
     <div id="statPanel" class="hidden">
@@ -76,7 +82,6 @@
   <script src="src/rewards.js"></script>
   <script src="src/inventory.js"></script>
   <script src="src/spellBooks.js"></script>
-  <script src="src/inheritance.js"></script>
   <script src="src/shop.js"></script>
   <script src="src/innerWorld.js"></script>
   <script src="src/ui.js"></script>

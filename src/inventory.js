@@ -1,28 +1,38 @@
 (function initInventory(global) {
   function createInventoryState() {
     return {
-      hpPotion: 0,
-      mpPotion: 0,
       spellBooks: [],
-      inheritanceSlots: [],
       magicList: [],
+      externalManualCount: 0,
+      internalManualCount: 0,
+      swordEnergyCount: 0,
+      martialManualTicket: 0,
     };
   }
 
-  function usePotion(inventory, playerState, type) {
-    if (type === "hp" && inventory.hpPotion > 0) {
-      inventory.hpPotion -= 1;
-      playerState.hp = Math.min(playerState.maxHp, playerState.hp + 20);
+  function useMartialManual(player, inventory, type) {
+    if (type === "external" && inventory.externalManualCount > 0) {
+      inventory.externalManualCount -= 1;
+      player.growth.state.temporaryBonuses.maxHpMultiplier *= 1.2;
+      player.growth.recalculate(player.swordStage);
       return true;
     }
-    if (type === "mp" && inventory.mpPotion > 0) {
-      inventory.mpPotion -= 1;
-      playerState.mp = Math.min(playerState.maxMp, playerState.mp + 20);
+    if (type === "internal" && inventory.internalManualCount > 0) {
+      inventory.internalManualCount -= 1;
+      player.growth.state.temporaryBonuses.maxMpMultiplier *= 1.1;
+      player.growth.state.temporaryBonuses.mpRegenMultiplier *= 1.1;
+      player.growth.recalculate(player.swordStage);
+      return true;
+    }
+    if (type === "sword" && inventory.swordEnergyCount > 0) {
+      inventory.swordEnergyCount -= 1;
+      player.swordStage = Math.min(6, player.swordStage + 1);
+      player.growth.recalculate(player.swordStage);
       return true;
     }
     return false;
   }
 
   global.createInventoryState = createInventoryState;
-  global.usePotion = usePotion;
+  global.useMartialManual = useMartialManual;
 })(window);
