@@ -540,6 +540,17 @@ function createScene() {
   const playerMat = new BABYLON.StandardMaterial("playerMat", scene);
   playerMat.diffuseColor = new BABYLON.Color3(0.9, 0.9, 1);
   player.material = playerMat;
+  const playerFront = BABYLON.MeshBuilder.CreateCylinder(
+    "playerFront",
+    { diameterTop: 0, diameterBottom: 0.24, height: 0.35, tessellation: 4 },
+    scene
+  );
+  playerFront.parent = player;
+  playerFront.position = new BABYLON.Vector3(0, 1.0, 0.55);
+  playerFront.rotation.x = Math.PI / 2;
+  const playerFrontMat = new BABYLON.StandardMaterial("playerFrontMat", scene);
+  playerFrontMat.emissiveColor = new BABYLON.Color3(0.2, 1, 0.2);
+  playerFront.material = playerFrontMat;
 
   const enemy = BABYLON.MeshBuilder.CreateCapsule("enemy", { height: 2, radius: 0.4 }, scene);
   enemy.position = new BABYLON.Vector3(0, 1, 5);
@@ -547,6 +558,17 @@ function createScene() {
   const enemyMat = new BABYLON.StandardMaterial("enemyMat", scene);
   enemyMat.diffuseColor = new BABYLON.Color3(1, 0.65, 0.65);
   enemy.material = enemyMat;
+  const enemyFront = BABYLON.MeshBuilder.CreateCylinder(
+    "enemyFront",
+    { diameterTop: 0, diameterBottom: 0.24, height: 0.35, tessellation: 4 },
+    scene
+  );
+  enemyFront.parent = enemy;
+  enemyFront.position = new BABYLON.Vector3(0, 1.0, 0.55);
+  enemyFront.rotation.x = Math.PI / 2;
+  const enemyFrontMat = new BABYLON.StandardMaterial("enemyFrontMat", scene);
+  enemyFrontMat.emissiveColor = new BABYLON.Color3(1, 0.25, 0.25);
+  enemyFront.material = enemyFrontMat;
 
   const input = createInputController(scene);
   const battleSystem = createBattleSystem(player, enemy, input);
