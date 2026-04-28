@@ -1,49 +1,62 @@
 const canvas = document.getElementById("gameCanvas");
 const engine = new BABYLON.Engine(canvas, true);
 
-  const CONFIG = {
-  player: {
-    maxHp: 100,
-    moveSpeed: 4.5,
-    rotationSpeed: 10,
-    attackRange: 1.8,
-    attackAngleDotMin: 0.35,
-    attackDamage: 25,
-    attackDuration: 0.18,
-    attackCooldown: 0.32,
-    dodgeSpeed: 12,
-    dodgeDuration: 0.22,
-    dodgeInvincibleDuration: 0.16,
-    dodgeCooldown: 0.45,
-    guardDamageMultiplier: 0.35,
-    guardFrontDotMin: 0.15,
-  },
-  enemy: {
-    maxHp: 100,
-    moveSpeed: 2.7,
-    rotationSpeed: 8,
-    chaseRange: 8,
-    attackRange: 1.6,
-    attackAngleDotMin: -1,
-    attackDamage: 14,
-    attackDuration: 0.26,
-    attackCooldown: 1.2,
-  },
+const BASE_STATS = {
+  strength: 10,
+  agility: 10,
+  vitality: 10,
+  intelligence: 10,
+  wisdom: 10,
+  luck: 10,
 };
+
+const REWARD_POOL = [
+  { id: "maxHp", label: "최대 HP +20", apply: (s) => (s.bonus.maxHp += 20) },
+  { id: "attack", label: "공격력 +4", apply: (s) => (s.bonus.attack += 4) },
+  { id: "dodge", label: "회피 거리 +0.8", apply: (s) => (s.bonus.dodgeDistance += 0.8) },
+  { id: "guard", label: "가드 강화(+정면 판정)", apply: (s) => (s.bonus.guardAngle += 0.08) },
+  { id: "move", label: "이동속도 +0.5", apply: (s) => (s.bonus.moveSpeed += 0.5) },
+  { id: "crit", label: "치명타 확률 +5%", apply: (s) => (s.bonus.critChance += 0.05) },
+];
+
+function clamp01(v) {
+  return Math.max(0, Math.min(1, v));
+}
+
+function sampleRewards() {
+  const shuffled = [...REWARD_POOL].sort(() => Math.random() - 0.5);
+  return [shuffled[0], shuffled[1]];
+}
+
+function createProgressionState() {
+  return {
+    floor: 1,
+    level: 1,
+    statPoints: 0,
+    coins: 0,
+    stats: { ...BASE_STATS },
+    bonus: {
+      maxHp: 0,
+      attack: 0,
+      dodgeDistance: 0,
+      guardAngle: 0,
+      moveSpeed: 0,
+      critChance: 0,
+    },
+    currentRewards: [],
+    innerWorld: {
+      active: false,
+      step: "none", // recovery -> reward -> stats -> next
+      rewardChosen: false,
+      statsDone: false,
+    },
+  };
+}
 
 function createInputController(scene) {
   const keys = { w: false, a: false, s: false, d: false };
-  const actionState = {
-    attackHeld: false,
-    dodgeHeld: false,
-    guardHeld: false,
-    attackPressed: false,
-    dodgePressed: false,
-  };
-  const movementSources = {
-    keyboard: new BABYLON.Vector2(0, 0),
-    joystick: new BABYLON.Vector2(0, 0),
-  };
+  const action = { attackPressed: false, dodgePressed: false, guardHeld: false };
+  let enabled = true;
 
   const joystickRoot = document.getElementById("mobileJoystick");
   const joystickBase = document.getElementById("joystickBase");
@@ -52,462 +65,390 @@ function createInputController(scene) {
   const dodgeBtn = document.getElementById("dodgeBtn");
   const guardBtn = document.getElementById("guardBtn");
 
-  const joystickRadius = 60;
-  const knobRadius = 27;
-  const maxDistance = joystickRadius - knobRadius;
+  const movement = { keyboard: new BABYLON.Vector2(), joystick: new BABYLON.Vector2() };
+  const keyMap = { KeyW: "w", KeyA: "a", KeyS: "s", KeyD: "d" };
+  const maxDistance = 33;
   let activeJoystickPointerId = null;
 
-  const keyMap = { KeyW: "w", KeyA: "a", KeyS: "s", KeyD: "d" };
-
-  function setButtonHold(button, isHeld) {
-    button.classList.toggle("is-active", isHeld);
+  function setEnabled(v) {
+    enabled = v;
+    if (!enabled) {
+      movement.joystick.set(0, 0);
+      movement.keyboard.set(0, 0);
+      action.attackPressed = false;
+      action.dodgePressed = false;
+      action.guardHeld = false;
+      joystickKnob.style.left = "50%";
+      joystickKnob.style.top = "50%";
+    }
   }
 
-  function bindTapButton(button, onPress, onRelease) {
+  function bindPressButton(button, onDown, onUp) {
     let pointerId = null;
-
-    button.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      pointerId = event.pointerId;
+    button.addEventListener("pointerdown", (e) => {
+      if (!enabled) return;
+      e.preventDefault();
+      pointerId = e.pointerId;
       button.setPointerCapture(pointerId);
-      onPress();
+      button.classList.add("is-active");
+      onDown();
     });
 
-    function stop(event) {
-      if (pointerId !== event.pointerId) return;
-      if (button.hasPointerCapture(pointerId)) {
-        button.releasePointerCapture(pointerId);
-      }
+    function stop(e) {
+      if (pointerId !== e.pointerId) return;
+      if (button.hasPointerCapture(pointerId)) button.releasePointerCapture(pointerId);
       pointerId = null;
-      onRelease();
+      button.classList.remove("is-active");
+      onUp();
     }
 
     button.addEventListener("pointerup", stop);
     button.addEventListener("pointercancel", stop);
   }
 
-  function resetJoystick() {
-    movementSources.joystick.set(0, 0);
+  bindPressButton(
+    attackBtn,
+    () => (action.attackPressed = true),
+    () => {}
+  );
+  bindPressButton(
+    dodgeBtn,
+    () => (action.dodgePressed = true),
+    () => {}
+  );
+  bindPressButton(
+    guardBtn,
+    () => (action.guardHeld = true),
+    () => (action.guardHeld = false)
+  );
+
+  function updateJoystick(clientX, clientY) {
+    const rect = joystickBase.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    let dx = clientX - cx;
+    let dy = clientY - cy;
+    const dist = Math.hypot(dx, dy);
+    if (dist > maxDistance) {
+      const ratio = maxDistance / dist;
+      dx *= ratio;
+      dy *= ratio;
+    }
+    movement.joystick.set(dx / maxDistance, -dy / maxDistance);
+    joystickKnob.style.left = `calc(50% + ${dx}px)`;
+    joystickKnob.style.top = `calc(50% + ${dy}px)`;
+  }
+
+  joystickRoot.addEventListener("pointerdown", (e) => {
+    if (!enabled) return;
+    e.preventDefault();
+    activeJoystickPointerId = e.pointerId;
+    joystickRoot.setPointerCapture(e.pointerId);
+    updateJoystick(e.clientX, e.clientY);
+  });
+  joystickRoot.addEventListener("pointermove", (e) => {
+    if (!enabled || e.pointerId !== activeJoystickPointerId) return;
+    e.preventDefault();
+    updateJoystick(e.clientX, e.clientY);
+  });
+  function stopJoystick(e) {
+    if (e.pointerId !== activeJoystickPointerId) return;
+    if (joystickRoot.hasPointerCapture(e.pointerId)) joystickRoot.releasePointerCapture(e.pointerId);
+    activeJoystickPointerId = null;
+    movement.joystick.set(0, 0);
     joystickKnob.style.left = "50%";
     joystickKnob.style.top = "50%";
   }
-
-  function updateJoystickFromClient(clientX, clientY) {
-    const rect = joystickBase.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    let deltaX = clientX - centerX;
-    let deltaY = clientY - centerY;
-    const distance = Math.hypot(deltaX, deltaY);
-
-    if (distance > maxDistance) {
-      const ratio = maxDistance / distance;
-      deltaX *= ratio;
-      deltaY *= ratio;
-    }
-
-    movementSources.joystick.set(deltaX / maxDistance, -deltaY / maxDistance);
-    joystickKnob.style.left = `calc(50% + ${deltaX}px)`;
-    joystickKnob.style.top = `calc(50% + ${deltaY}px)`;
-  }
-
-  joystickRoot.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    activeJoystickPointerId = event.pointerId;
-    joystickRoot.setPointerCapture(event.pointerId);
-    updateJoystickFromClient(event.clientX, event.clientY);
-  });
-
-  joystickRoot.addEventListener("pointermove", (event) => {
-    if (event.pointerId !== activeJoystickPointerId) return;
-    event.preventDefault();
-    updateJoystickFromClient(event.clientX, event.clientY);
-  });
-
-  function stopJoystick(event) {
-    if (event.pointerId !== activeJoystickPointerId) return;
-    if (joystickRoot.hasPointerCapture(event.pointerId)) {
-      joystickRoot.releasePointerCapture(event.pointerId);
-    }
-    activeJoystickPointerId = null;
-    resetJoystick();
-  }
-
   joystickRoot.addEventListener("pointerup", stopJoystick);
   joystickRoot.addEventListener("pointercancel", stopJoystick);
-  resetJoystick();
 
-  bindTapButton(
-    attackBtn,
-    () => {
-      actionState.attackHeld = true;
-      actionState.attackPressed = true;
-      setButtonHold(attackBtn, true);
-    },
-    () => {
-      actionState.attackHeld = false;
-      setButtonHold(attackBtn, false);
-    }
-  );
+  scene.onKeyboardObservable.add((kb) => {
+    const isDown = kb.type === BABYLON.KeyboardEventTypes.KEYDOWN;
+    const isUp = kb.type === BABYLON.KeyboardEventTypes.KEYUP;
+    const code = kb.event.code;
+    if (!enabled) return;
 
-  bindTapButton(
-    dodgeBtn,
-    () => {
-      actionState.dodgeHeld = true;
-      actionState.dodgePressed = true;
-      setButtonHold(dodgeBtn, true);
-    },
-    () => {
-      actionState.dodgeHeld = false;
-      setButtonHold(dodgeBtn, false);
-    }
-  );
-
-  bindTapButton(
-    guardBtn,
-    () => {
-      actionState.guardHeld = true;
-      setButtonHold(guardBtn, true);
-    },
-    () => {
-      actionState.guardHeld = false;
-      setButtonHold(guardBtn, false);
-    }
-  );
-
-  scene.onKeyboardObservable.add((kbInfo) => {
-    const code = kbInfo.event.code;
-    const mapped = keyMap[code];
-    const isDown = kbInfo.type === BABYLON.KeyboardEventTypes.KEYDOWN;
-    const isUp = kbInfo.type === BABYLON.KeyboardEventTypes.KEYUP;
-
-    if (mapped) {
-      if (isDown) keys[mapped] = true;
-      if (isUp) keys[mapped] = false;
-      return;
+    if (keyMap[code]) {
+      if (isDown) keys[keyMap[code]] = true;
+      if (isUp) keys[keyMap[code]] = false;
     }
 
-    if (code === "Space" && isDown) {
-      actionState.attackPressed = true;
-      actionState.attackHeld = true;
+    if (code === "Space" && isDown) action.attackPressed = true;
+    if ((code === "ShiftLeft" || code === "ShiftRight") && isDown) action.dodgePressed = true;
+    if (code === "KeyF") {
+      if (isDown) action.guardHeld = true;
+      if (isUp) action.guardHeld = false;
     }
-    if (code === "Space" && isUp) actionState.attackHeld = false;
-
-    if ((code === "ShiftLeft" || code === "ShiftRight") && isDown) {
-      actionState.dodgePressed = true;
-      actionState.dodgeHeld = true;
-    }
-    if ((code === "ShiftLeft" || code === "ShiftRight") && isUp) actionState.dodgeHeld = false;
-
-    if (code === "KeyF" && isDown) actionState.guardHeld = true;
-    if (code === "KeyF" && isUp) actionState.guardHeld = false;
   });
 
   return {
-    getMoveVector() {
+    setEnabled,
+    consumeActions() {
+      const out = { ...action };
+      action.attackPressed = false;
+      action.dodgePressed = false;
+      return out;
+    },
+    getMoveInput() {
       let x = 0;
       let z = 0;
       if (keys.w) z += 1;
       if (keys.s) z -= 1;
       if (keys.a) x -= 1;
       if (keys.d) x += 1;
-      movementSources.keyboard.set(x, z);
-
-      const move = movementSources.keyboard.add(movementSources.joystick);
+      movement.keyboard.set(x, z);
+      const move = movement.keyboard.add(movement.joystick);
       if (move.lengthSquared() > 1) move.normalize();
       return move;
     },
-    getActionState() {
-      return actionState;
-    },
-    consumeTriggers() {
-      const triggered = {
-        attack: actionState.attackPressed,
-        dodge: actionState.dodgePressed,
-      };
-      actionState.attackPressed = false;
-      actionState.dodgePressed = false;
-      return triggered;
-    },
   };
 }
 
-function forwardFromQuaternion(rotationQuaternion) {
-  const rotMatrix = BABYLON.Matrix.Identity();
-  rotationQuaternion.toRotationMatrix(rotMatrix);
-  return BABYLON.Vector3.TransformNormal(BABYLON.Axis.Z, rotMatrix).normalize();
+function getFacing(mesh) {
+  if (!mesh.rotationQuaternion) mesh.rotationQuaternion = BABYLON.Quaternion.Identity();
+  const m = BABYLON.Matrix.Identity();
+  mesh.rotationQuaternion.toRotationMatrix(m);
+  return BABYLON.Vector3.TransformNormal(BABYLON.Axis.Z, m).normalize();
 }
 
-function createBattleSystem(player, enemy, input) {
+function createBattleSystem(scene, player, progression) {
   const playerState = {
-    hp: CONFIG.player.maxHp,
-    isDodging: false,
+    hp: 100,
+    maxHp: 100,
+    mp: 100,
+    maxMp: 100,
+    moveSpeed: 4.5,
+    attackDamage: 20,
+    critChance: 0.05,
+    dodgeSpeed: 11,
+    dodgeDuration: 0.22,
+    dodgeDistance: 2.6,
     dodgeTimer: 0,
-    dodgeCooldown: 0,
-    dodgeDirection: new BABYLON.Vector3(0, 0, 1),
-    isInvincible: false,
-    isGuarding: false,
+    dodging: false,
+    invincible: false,
+    guardHeld: false,
     attackTimer: 0,
     attackCooldown: 0,
     attackHitDone: false,
-  };
-
-  const enemyState = {
-    hp: CONFIG.enemy.maxHp,
-    attackTimer: 0,
-    attackCooldown: 0,
-    attackHitDone: false,
-  };
-
-  const gameState = {
-    phase: "playing", // playing | clear | defeat
-  };
-  const fxState = {
-    feedbackText: "",
+    feedback: "",
     feedbackTimer: 0,
-    playerAttackFxTimer: 0,
   };
 
-  function triggerFeedback(text, duration = 0.25) {
-    fxState.feedbackText = text;
-    fxState.feedbackTimer = duration;
+  let enemy = null;
+  let enemyFront = null;
+  let enemyMat = null;
+  const enemyState = {
+    hp: 100,
+    maxHp: 100,
+    moveSpeed: 2.6,
+    attackDamage: 12,
+    attackRange: 1.6,
+    chaseRange: 10,
+    attackTimer: 0,
+    attackCooldown: 0,
+    attackHitDone: false,
+  };
+
+  const battle = { phase: "playing" };
+
+  function recomputePlayerFromStats() {
+    const s = progression.stats;
+    const b = progression.bonus;
+    playerState.maxHp = 100 + s.vitality * 8 + b.maxHp;
+    playerState.maxMp = 100 + s.intelligence * 5;
+    playerState.moveSpeed = 3.5 + s.agility * 0.08 + b.moveSpeed;
+    playerState.attackDamage = 8 + s.strength * 1.6 + b.attack;
+    playerState.critChance = clamp01(0.05 + s.luck * 0.004 + b.critChance);
+    playerState.dodgeDistance = 2.2 + s.agility * 0.03 + b.dodgeDistance;
+    playerState.dodgeSpeed = playerState.dodgeDistance / playerState.dodgeDuration;
+    playerState.hp = Math.min(playerState.hp, playerState.maxHp);
+    playerState.mp = Math.min(playerState.mp, playerState.maxMp);
   }
 
-  function getFacing(mesh) {
-    if (!mesh.rotationQuaternion) mesh.rotationQuaternion = BABYLON.Quaternion.Identity();
-    return forwardFromQuaternion(mesh.rotationQuaternion);
+  function spawnEnemyForFloor(floor) {
+    if (enemy) {
+      enemy.dispose();
+      enemyFront.dispose();
+    }
+
+    enemy = BABYLON.MeshBuilder.CreateCapsule("enemy", { height: 2, radius: 0.4 }, scene);
+    enemy.position = new BABYLON.Vector3(0, 1, 5);
+    enemy.rotationQuaternion = BABYLON.Quaternion.Identity();
+    enemyMat = new BABYLON.StandardMaterial(`enemyMat${floor}`, scene);
+    enemyMat.diffuseColor = new BABYLON.Color3(1, 0.65, 0.65);
+    enemy.material = enemyMat;
+
+    enemyFront = BABYLON.MeshBuilder.CreateCylinder(
+      "enemyFront",
+      { diameterTop: 0, diameterBottom: 0.24, height: 0.35, tessellation: 4 },
+      scene
+    );
+    enemyFront.parent = enemy;
+    enemyFront.position = new BABYLON.Vector3(0, 1.0, 0.55);
+    enemyFront.rotation.x = Math.PI / 2;
+    const frontMat = new BABYLON.StandardMaterial(`enemyFrontMat${floor}`, scene);
+    frontMat.emissiveColor = new BABYLON.Color3(1, 0.25, 0.25);
+    enemyFront.material = frontMat;
+
+    const scale = 1 + (floor - 1) * 0.18;
+    enemyState.maxHp = 90 * scale;
+    enemyState.hp = enemyState.maxHp;
+    enemyState.moveSpeed = 2.3 + floor * 0.12;
+    enemyState.attackDamage = 10 + floor * 1.8;
+    enemyState.attackRange = 1.6 + Math.min(0.5, floor * 0.02);
+    enemyState.attackCooldown = 0;
+    enemyState.attackTimer = 0;
+    enemyState.attackHitDone = false;
+
+    battle.phase = "playing";
   }
 
-  function applyDamage(target, attacker, damage) {
-    if (target === player && playerState.isInvincible) return;
+  function recoverFull() {
+    playerState.hp = playerState.maxHp;
+    playerState.mp = playerState.maxMp;
+  }
 
-    let finalDamage = damage;
+  function dealDamageToEnemy(amount) {
+    enemyState.hp = Math.max(0, enemyState.hp - amount);
+    if (enemyState.hp <= 0) {
+      battle.phase = "clear";
+    }
+  }
 
-    if (target === player && playerState.isGuarding) {
-      const playerForward = getFacing(player);
-      const toAttacker = attacker.position.subtract(player.position);
-      toAttacker.y = 0;
-      if (toAttacker.lengthSquared() > 0) {
-        toAttacker.normalize();
-        if (BABYLON.Vector3.Dot(playerForward, toAttacker) >= CONFIG.player.guardFrontDotMin) {
-          finalDamage = 0;
-          triggerFeedback("가드 성공", 0.2);
+  function dealDamageToPlayer(amount) {
+    if (playerState.invincible) return;
+
+    let final = amount;
+    if (playerState.guardHeld) {
+      const forward = getFacing(player);
+      const toEnemy = enemy.position.subtract(player.position);
+      toEnemy.y = 0;
+      if (toEnemy.lengthSquared() > 0) {
+        toEnemy.normalize();
+        const guardDot = 0.12 + progression.bonus.guardAngle;
+        if (BABYLON.Vector3.Dot(forward, toEnemy) >= guardDot) {
+          final = 0;
+          playerState.feedback = "가드 성공";
+          playerState.feedbackTimer = 0.2;
         }
       }
     }
 
-    if (target === player) {
-      playerState.hp = Math.max(0, playerState.hp - finalDamage);
-      if (playerState.hp <= 0) gameState.phase = "defeat";
-    } else {
-      enemyState.hp = Math.max(0, enemyState.hp - finalDamage);
-      if (enemyState.hp <= 0) gameState.phase = "clear";
-    }
-  }
-
-  function tryPlayerAttackHit() {
-    if (playerState.attackHitDone || enemyState.hp <= 0) return;
-
-    const toEnemy = enemy.position.subtract(player.position);
-    toEnemy.y = 0;
-    const dist = toEnemy.length();
-    if (dist > CONFIG.player.attackRange || dist <= 0) return;
-
-    toEnemy.normalize();
-    const forward = getFacing(player);
-    const dot = BABYLON.Vector3.Dot(forward, toEnemy);
-    if (dot < CONFIG.player.attackAngleDotMin) return;
-
-    playerState.attackHitDone = true;
-    applyDamage(enemy, player, CONFIG.player.attackDamage);
-  }
-
-  function tryEnemyAttackHit() {
-    if (enemyState.attackHitDone || playerState.hp <= 0) return;
-
-    const toPlayer = player.position.subtract(enemy.position);
-    toPlayer.y = 0;
-    const dist = toPlayer.length();
-    if (dist > CONFIG.enemy.attackRange || dist <= 0) return;
-
-    toPlayer.normalize();
-    const enemyForward = getFacing(enemy);
-    const dot = BABYLON.Vector3.Dot(enemyForward, toPlayer);
-    if (dot < CONFIG.enemy.attackAngleDotMin) return;
-
-    enemyState.attackHitDone = true;
-    applyDamage(player, enemy, CONFIG.enemy.attackDamage);
+    playerState.hp = Math.max(0, playerState.hp - final);
+    if (playerState.hp <= 0) battle.phase = "defeat";
   }
 
   return {
-    update(deltaSeconds, movementDirection) {
-      if (gameState.phase !== "playing") return;
+    setupForFloor(floor) {
+      recomputePlayerFromStats();
+      spawnEnemyForFloor(floor);
+      player.position.set(0, 1, 0);
+      player.rotationQuaternion = BABYLON.Quaternion.Identity();
+      recoverFull();
+    },
+    recoverFull,
+    update(delta, moveDir, actions) {
+      if (battle.phase !== "playing") return;
 
-      const action = input.getActionState();
-      const triggers = input.consumeTriggers();
+      playerState.attackCooldown = Math.max(0, playerState.attackCooldown - delta);
+      enemyState.attackCooldown = Math.max(0, enemyState.attackCooldown - delta);
+      playerState.guardHeld = !!actions.guardHeld && !playerState.dodging;
 
-      playerState.isGuarding = !!action.guardHeld && !playerState.isDodging;
-
-      playerState.attackCooldown = Math.max(0, playerState.attackCooldown - deltaSeconds);
-      playerState.dodgeCooldown = Math.max(0, playerState.dodgeCooldown - deltaSeconds);
-      enemyState.attackCooldown = Math.max(0, enemyState.attackCooldown - deltaSeconds);
-
-      if (triggers.attack && playerState.attackTimer <= 0 && playerState.attackCooldown <= 0 && !playerState.isDodging) {
-        playerState.attackTimer = CONFIG.player.attackDuration;
-        playerState.attackCooldown = CONFIG.player.attackCooldown;
+      if (actions.attackPressed && playerState.attackCooldown <= 0 && !playerState.dodging) {
+        playerState.attackTimer = 0.16;
+        playerState.attackCooldown = 0.3;
         playerState.attackHitDone = false;
-        fxState.playerAttackFxTimer = 0.14;
-        triggerFeedback("공격!");
+        playerState.feedback = "공격";
+        playerState.feedbackTimer = 0.15;
       }
 
-      if (triggers.dodge && !playerState.isDodging && playerState.dodgeCooldown <= 0) {
-        playerState.isDodging = true;
-        playerState.dodgeTimer = CONFIG.player.dodgeDuration;
-        playerState.dodgeCooldown = CONFIG.player.dodgeCooldown;
-        playerState.isInvincible = true;
-
-        if (movementDirection.lengthSquared() > 0) {
-          playerState.dodgeDirection.copyFrom(movementDirection).normalize();
-        } else {
-          playerState.dodgeDirection.copyFrom(getFacing(player));
-        }
-        triggerFeedback("회피!");
-      }
-
-      if (playerState.isGuarding) {
-        triggerFeedback("가드", 0.1);
+      if (actions.dodgePressed && !playerState.dodging) {
+        playerState.dodging = true;
+        playerState.dodgeTimer = playerState.dodgeDuration;
+        playerState.invincible = true;
+        playerState.feedback = "회피";
+        playerState.feedbackTimer = 0.16;
       }
 
       if (playerState.attackTimer > 0) {
-        playerState.attackTimer -= deltaSeconds;
-        tryPlayerAttackHit();
+        playerState.attackTimer -= delta;
+        if (!playerState.attackHitDone) {
+          const toEnemy = enemy.position.subtract(player.position);
+          toEnemy.y = 0;
+          const dist = toEnemy.length();
+          if (dist <= 1.85) {
+            toEnemy.normalize();
+            if (BABYLON.Vector3.Dot(getFacing(player), toEnemy) > 0.2) {
+              const crit = Math.random() < playerState.critChance ? 1.5 : 1;
+              dealDamageToEnemy(playerState.attackDamage * crit);
+              playerState.attackHitDone = true;
+              if (crit > 1) {
+                playerState.feedback = "치명타!";
+                playerState.feedbackTimer = 0.22;
+              }
+            }
+          }
+        }
       }
 
-      if (playerState.isDodging) {
-        player.position.addInPlace(playerState.dodgeDirection.scale(CONFIG.player.dodgeSpeed * deltaSeconds));
-        playerState.dodgeTimer -= deltaSeconds;
-
-        if (playerState.dodgeTimer <= CONFIG.player.dodgeDuration - CONFIG.player.dodgeInvincibleDuration) {
-          playerState.isInvincible = false;
-        }
-
+      if (playerState.dodging) {
+        const dodgeDir = moveDir.lengthSquared() > 0 ? moveDir : getFacing(player);
+        player.position.addInPlace(dodgeDir.scale(playerState.dodgeSpeed * delta));
+        playerState.dodgeTimer -= delta;
+        if (playerState.dodgeTimer < 0.12) playerState.invincible = false;
         if (playerState.dodgeTimer <= 0) {
-          playerState.isDodging = false;
-          playerState.isInvincible = false;
+          playerState.dodging = false;
+          playerState.invincible = false;
         }
       }
 
       const toPlayer = player.position.subtract(enemy.position);
       toPlayer.y = 0;
-      const distanceToPlayer = toPlayer.length();
+      const distToPlayer = toPlayer.length();
 
-      if (distanceToPlayer > 0.0001) {
+      if (distToPlayer > 0.001) {
         const dir = toPlayer.normalize();
-        const targetYaw = Math.atan2(dir.x, dir.z);
-        const targetRotation = BABYLON.Quaternion.FromEulerAngles(0, targetYaw, 0);
-        if (!enemy.rotationQuaternion) enemy.rotationQuaternion = BABYLON.Quaternion.Identity();
-        enemy.rotationQuaternion = BABYLON.Quaternion.Slerp(
-          enemy.rotationQuaternion,
-          targetRotation,
-          Math.min(1, CONFIG.enemy.rotationSpeed * deltaSeconds)
-        );
+        const yaw = Math.atan2(dir.x, dir.z);
+        const targetRot = BABYLON.Quaternion.FromEulerAngles(0, yaw, 0);
+        enemy.rotationQuaternion = BABYLON.Quaternion.Slerp(enemy.rotationQuaternion, targetRot, Math.min(1, delta * 8));
       }
 
-      if (distanceToPlayer > CONFIG.enemy.attackRange && distanceToPlayer < CONFIG.enemy.chaseRange) {
-        const chaseDir = toPlayer.normalize();
-        enemy.position.addInPlace(chaseDir.scale(CONFIG.enemy.moveSpeed * deltaSeconds));
-      } else if (enemyState.attackCooldown <= 0 && enemyState.attackTimer <= 0 && distanceToPlayer <= CONFIG.enemy.attackRange) {
-        enemyState.attackTimer = CONFIG.enemy.attackDuration;
-        enemyState.attackCooldown = CONFIG.enemy.attackCooldown;
+      if (distToPlayer > enemyState.attackRange && distToPlayer < enemyState.chaseRange) {
+        enemy.position.addInPlace(toPlayer.normalize().scale(enemyState.moveSpeed * delta));
+      } else if (enemyState.attackCooldown <= 0 && distToPlayer <= enemyState.attackRange) {
+        enemyState.attackTimer = 0.22;
+        enemyState.attackCooldown = 1.2;
         enemyState.attackHitDone = false;
       }
 
       if (enemyState.attackTimer > 0) {
-        enemyState.attackTimer -= deltaSeconds;
-        tryEnemyAttackHit();
+        enemyState.attackTimer -= delta;
+        if (!enemyState.attackHitDone && distToPlayer <= enemyState.attackRange + 0.1) {
+          enemyState.attackHitDone = true;
+          dealDamageToPlayer(enemyState.attackDamage);
+        }
       }
 
-      fxState.feedbackTimer = Math.max(0, fxState.feedbackTimer - deltaSeconds);
-      if (fxState.feedbackTimer <= 0) {
-        fxState.feedbackText = "";
-      }
-      fxState.playerAttackFxTimer = Math.max(0, fxState.playerAttackFxTimer - deltaSeconds);
+      playerState.feedbackTimer = Math.max(0, playerState.feedbackTimer - delta);
+      if (playerState.feedbackTimer <= 0) playerState.feedback = "";
     },
-
-    getUiState() {
-      return {
-        playerHp: Math.ceil(playerState.hp),
-        playerMaxHp: CONFIG.player.maxHp,
-        enemyHp: Math.ceil(enemyState.hp),
-        enemyMaxHp: CONFIG.enemy.maxHp,
-        phase: gameState.phase,
-        feedbackText: fxState.feedbackText,
-      };
+    getPlayerState() {
+      return { ...playerState };
     },
-
-    canMovePlayer() {
-      return gameState.phase === "playing" && !playerState.isDodging;
+    getEnemyState() {
+      return { ...enemyState, mesh: enemy };
     },
-
-    isPlayerGuarding() {
-      return playerState.isGuarding;
+    getPhase() {
+      return battle.phase;
     },
+    setPlayerEmissive(playerMat) {
+      if (playerState.dodging) playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.9, 1);
+      else if (playerState.guardHeld) playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.45, 1);
+      else if (playerState.attackTimer > 0) playerMat.emissiveColor = new BABYLON.Color3(1, 0.45, 0.2);
+      else playerMat.emissiveColor = BABYLON.Color3.Black();
 
-    getFxState() {
-      return {
-        playerAttacking: playerState.attackTimer > 0,
-        playerDodging: playerState.isDodging,
-        playerGuarding: playerState.isGuarding,
-        enemyAttacking: enemyState.attackTimer > 0,
-        playerAttackFxTimer: fxState.playerAttackFxTimer,
-      };
-    },
-  };
-}
-
-function createPlayerController(player, camera, input, battleSystem) {
-  const cameraForward = BABYLON.Vector3.Zero();
-  const cameraRight = BABYLON.Vector3.Zero();
-  const movement = BABYLON.Vector3.Zero();
-  const lastMoveDirection = new BABYLON.Vector3(0, 0, 1);
-
-  return {
-    update(deltaSeconds) {
-      const moveInput = input.getMoveVector();
-
-      cameraForward.copyFrom(camera.getForwardRay().direction);
-      cameraForward.y = 0;
-      if (cameraForward.lengthSquared() > 0) cameraForward.normalize();
-      else cameraForward.set(0, 0, 1);
-
-      BABYLON.Vector3.CrossToRef(BABYLON.Axis.Y, cameraForward, cameraRight);
-      cameraRight.normalize();
-
-      movement.copyFromFloats(0, 0, 0);
-      movement.addInPlace(cameraRight.scale(moveInput.x));
-      movement.addInPlace(cameraForward.scale(moveInput.y));
-
-      if (movement.lengthSquared() > 0) {
-        movement.normalize();
-        lastMoveDirection.copyFrom(movement);
-      }
-
-      battleSystem.update(deltaSeconds, lastMoveDirection);
-
-      if (battleSystem.canMovePlayer() && movement.lengthSquared() > 0) {
-        player.position.addInPlace(movement.scale(CONFIG.player.moveSpeed * deltaSeconds));
-      }
-
-      const facingDir = movement.lengthSquared() > 0 ? movement : lastMoveDirection;
-      if (facingDir.lengthSquared() > 0) {
-        const yaw = Math.atan2(facingDir.x, facingDir.z);
-        const target = BABYLON.Quaternion.FromEulerAngles(0, yaw, 0);
-        if (!player.rotationQuaternion) player.rotationQuaternion = BABYLON.Quaternion.Identity();
-        player.rotationQuaternion = BABYLON.Quaternion.Slerp(
-          player.rotationQuaternion,
-          target,
-          Math.min(1, CONFIG.player.rotationSpeed * deltaSeconds)
-        );
+      if (enemyMat) {
+        enemyMat.emissiveColor = enemyState.attackTimer > 0 ? new BABYLON.Color3(1, 0.2, 0.2) : BABYLON.Color3.Black();
       }
     },
   };
@@ -515,16 +456,9 @@ function createPlayerController(player, camera, input, battleSystem) {
 
 function createScene() {
   const scene = new BABYLON.Scene(engine);
+  const progression = createProgressionState();
 
-  const camera = new BABYLON.ArcRotateCamera(
-    "camera",
-    Math.PI / 2,
-    Math.PI / 3,
-    12,
-    new BABYLON.Vector3(0, 1, 0),
-    scene
-  );
-
+  const camera = new BABYLON.ArcRotateCamera("camera", Math.PI / 2, Math.PI / 3, 12, new BABYLON.Vector3(0, 1, 0), scene);
   camera.attachControl(canvas, true);
   camera.lowerRadiusLimit = 6;
   camera.upperRadiusLimit = 18;
@@ -532,7 +466,7 @@ function createScene() {
   const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
   light.intensity = 0.95;
 
-  BABYLON.MeshBuilder.CreateGround("ground", { width: 16, height: 16 }, scene);
+  BABYLON.MeshBuilder.CreateGround("ground", { width: 20, height: 20 }, scene);
 
   const player = BABYLON.MeshBuilder.CreateCapsule("player", { height: 2, radius: 0.4 }, scene);
   player.position.y = 1;
@@ -540,73 +474,199 @@ function createScene() {
   const playerMat = new BABYLON.StandardMaterial("playerMat", scene);
   playerMat.diffuseColor = new BABYLON.Color3(0.9, 0.9, 1);
   player.material = playerMat;
-  const playerFront = BABYLON.MeshBuilder.CreateCylinder(
-    "playerFront",
-    { diameterTop: 0, diameterBottom: 0.24, height: 0.35, tessellation: 4 },
-    scene
-  );
+
+  const playerFront = BABYLON.MeshBuilder.CreateCylinder("playerFront", { diameterTop: 0, diameterBottom: 0.24, height: 0.35, tessellation: 4 }, scene);
   playerFront.parent = player;
-  playerFront.position = new BABYLON.Vector3(0, 1.0, 0.55);
+  playerFront.position = new BABYLON.Vector3(0, 1, 0.55);
   playerFront.rotation.x = Math.PI / 2;
   const playerFrontMat = new BABYLON.StandardMaterial("playerFrontMat", scene);
   playerFrontMat.emissiveColor = new BABYLON.Color3(0.2, 1, 0.2);
   playerFront.material = playerFrontMat;
 
-  const enemy = BABYLON.MeshBuilder.CreateCapsule("enemy", { height: 2, radius: 0.4 }, scene);
-  enemy.position = new BABYLON.Vector3(0, 1, 5);
-  enemy.rotationQuaternion = BABYLON.Quaternion.Identity();
-  const enemyMat = new BABYLON.StandardMaterial("enemyMat", scene);
-  enemyMat.diffuseColor = new BABYLON.Color3(1, 0.65, 0.65);
-  enemy.material = enemyMat;
-  const enemyFront = BABYLON.MeshBuilder.CreateCylinder(
-    "enemyFront",
-    { diameterTop: 0, diameterBottom: 0.24, height: 0.35, tessellation: 4 },
-    scene
-  );
-  enemyFront.parent = enemy;
-  enemyFront.position = new BABYLON.Vector3(0, 1.0, 0.55);
-  enemyFront.rotation.x = Math.PI / 2;
-  const enemyFrontMat = new BABYLON.StandardMaterial("enemyFrontMat", scene);
-  enemyFrontMat.emissiveColor = new BABYLON.Color3(1, 0.25, 0.25);
-  enemyFront.material = enemyFrontMat;
-
   const input = createInputController(scene);
-  const battleSystem = createBattleSystem(player, enemy, input);
-  const playerController = createPlayerController(player, camera, input, battleSystem);
+  const battle = createBattleSystem(scene, player, progression);
+  battle.setupForFloor(progression.floor);
 
-  const playerHpEl = document.getElementById("playerHp");
-  const enemyHpEl = document.getElementById("enemyHp");
-  const battleMessageEl = document.getElementById("battleMessage");
-  const actionFeedbackEl = document.getElementById("actionFeedback");
+  const hud = {
+    floorInfo: document.getElementById("floorInfo"),
+    progressInfo: document.getElementById("progressInfo"),
+    playerHp: document.getElementById("playerHp"),
+    enemyHp: document.getElementById("enemyHp"),
+    battleMessage: document.getElementById("battleMessage"),
+    actionFeedback: document.getElementById("actionFeedback"),
+  };
+
+  const ui = {
+    inner: document.getElementById("innerWorld"),
+    innerStepText: document.getElementById("innerStepText"),
+    rewardPanel: document.getElementById("rewardPanel"),
+    rewardChoices: document.getElementById("rewardChoices"),
+    rerollBtn: document.getElementById("rerollBtn"),
+    statPanel: document.getElementById("statPanel"),
+    statList: document.getElementById("statList"),
+    statDoneBtn: document.getElementById("statDoneBtn"),
+    nextFloorBtn: document.getElementById("nextFloorBtn"),
+  };
+
+  function enterInnerWorld() {
+    progression.innerWorld.active = true;
+    progression.innerWorld.step = "recovery";
+    progression.innerWorld.rewardChosen = false;
+    progression.innerWorld.statsDone = false;
+    battle.recoverFull();
+
+    progression.level += 5;
+    progression.statPoints += 15;
+    progression.coins += 1;
+    progression.currentRewards = sampleRewards();
+
+    input.setEnabled(false);
+    ui.inner.classList.remove("hidden");
+
+    progression.innerWorld.step = "reward";
+    renderInnerWorld();
+  }
+
+  function leaveInnerWorldToNextFloor() {
+    progression.floor += 1;
+    progression.innerWorld.active = false;
+    progression.innerWorld.step = "none";
+    ui.inner.classList.add("hidden");
+    input.setEnabled(true);
+    battle.setupForFloor(progression.floor);
+  }
+
+  function renderStatPanel() {
+    ui.statList.innerHTML = "";
+    const labels = {
+      strength: "힘",
+      agility: "민첩",
+      vitality: "체력",
+      intelligence: "지능",
+      wisdom: "지혜",
+      luck: "외모(운)",
+    };
+
+    Object.keys(labels).forEach((key) => {
+      const wrap = document.createElement("div");
+      wrap.textContent = `${labels[key]}: ${progression.stats[key]}`;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "+1";
+      btn.disabled = progression.statPoints <= 0;
+      btn.addEventListener("click", () => {
+        if (progression.statPoints <= 0) return;
+        progression.stats[key] += 1;
+        progression.statPoints -= 1;
+        renderInnerWorld();
+      });
+      wrap.appendChild(btn);
+      ui.statList.appendChild(wrap);
+    });
+  }
+
+  function renderRewardPanel() {
+    ui.rewardChoices.innerHTML = "";
+    progression.currentRewards.forEach((reward) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = reward.label;
+      btn.disabled = progression.innerWorld.rewardChosen;
+      btn.addEventListener("click", () => {
+        reward.apply(progression);
+        progression.innerWorld.rewardChosen = true;
+        progression.innerWorld.step = "stats";
+        renderInnerWorld();
+      });
+      ui.rewardChoices.appendChild(btn);
+    });
+    ui.rerollBtn.disabled = progression.coins <= 0 || progression.innerWorld.rewardChosen;
+  }
+
+  function renderInnerWorld() {
+    const step = progression.innerWorld.step;
+    ui.innerStepText.textContent =
+      step === "reward"
+        ? "순서 1/3: 보상 선택"
+        : step === "stats"
+          ? "순서 2/3: 스탯 투자"
+          : step === "next"
+            ? "순서 3/3: 다음 층 진입"
+            : "회복";
+
+    ui.rewardPanel.classList.toggle("hidden", step !== "reward");
+    ui.statPanel.classList.toggle("hidden", step !== "stats");
+    ui.nextFloorBtn.classList.toggle("hidden", step !== "next");
+
+    if (step === "reward") renderRewardPanel();
+    if (step === "stats") renderStatPanel();
+  }
+
+  ui.rerollBtn.addEventListener("click", () => {
+    if (progression.coins <= 0 || progression.innerWorld.step !== "reward") return;
+    progression.coins -= 1;
+    progression.currentRewards = sampleRewards();
+    renderInnerWorld();
+  });
+
+  ui.statDoneBtn.addEventListener("click", () => {
+    if (progression.innerWorld.step !== "stats") return;
+    progression.innerWorld.statsDone = true;
+    progression.innerWorld.step = "next";
+    renderInnerWorld();
+  });
+
+  ui.nextFloorBtn.addEventListener("click", () => {
+    if (progression.innerWorld.step !== "next") return;
+    leaveInnerWorldToNextFloor();
+  });
 
   scene.onBeforeRenderObservable.add(() => {
-    const deltaSeconds = engine.getDeltaTime() / 1000;
-    playerController.update(deltaSeconds);
-    camera.setTarget(player.position);
+    const dt = engine.getDeltaTime() / 1000;
 
-    const ui = battleSystem.getUiState();
-    const fx = battleSystem.getFxState();
-    playerHpEl.textContent = `플레이어 HP: ${ui.playerHp} / ${ui.playerMaxHp}`;
-    enemyHpEl.textContent = `적 HP: ${ui.enemyHp} / ${ui.enemyMaxHp}`;
-    actionFeedbackEl.textContent = ui.feedbackText;
+    const moveInput = input.getMoveInput();
+    const camForward = camera.getForwardRay().direction;
+    camForward.y = 0;
+    if (camForward.lengthSquared() > 0) camForward.normalize();
+    const camRight = BABYLON.Vector3.Cross(BABYLON.Axis.Y, camForward).normalize();
 
-    if (fx.playerDodging) {
-      playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.9, 1);
-    } else if (fx.playerGuarding) {
-      playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.45, 1);
-    } else if (fx.playerAttacking || fx.playerAttackFxTimer > 0) {
-      playerMat.emissiveColor = new BABYLON.Color3(1, 0.45, 0.2);
-    } else {
-      playerMat.emissiveColor = BABYLON.Color3.Black();
+    const moveDir = camRight.scale(moveInput.x).add(camForward.scale(moveInput.y));
+    if (moveDir.lengthSquared() > 0) {
+      moveDir.normalize();
+      const yaw = Math.atan2(moveDir.x, moveDir.z);
+      const target = BABYLON.Quaternion.FromEulerAngles(0, yaw, 0);
+      player.rotationQuaternion = BABYLON.Quaternion.Slerp(player.rotationQuaternion, target, Math.min(1, dt * 10));
     }
 
-    enemyMat.emissiveColor = fx.enemyAttacking
-      ? new BABYLON.Color3(1, 0.2, 0.2)
-      : BABYLON.Color3.Black();
+    const actions = input.consumeActions();
+    battle.update(dt, moveDir, actions);
 
-    if (ui.phase === "clear") battleMessageEl.textContent = "층 클리어";
-    else if (ui.phase === "defeat") battleMessageEl.textContent = "패배";
-    else battleMessageEl.textContent = "";
+    const pState = battle.getPlayerState();
+    if (!pState.dodging && battle.getPhase() === "playing" && moveDir.lengthSquared() > 0) {
+      player.position.addInPlace(moveDir.scale(pState.moveSpeed * dt));
+    }
+
+    battle.setPlayerEmissive(playerMat);
+    camera.setTarget(player.position);
+
+    const eState = battle.getEnemyState();
+    hud.floorInfo.textContent = `Floor: ${progression.floor}`;
+    hud.progressInfo.textContent = `Lv ${progression.level} | Stat Pts ${progression.statPoints} | Coin ${progression.coins}`;
+    hud.playerHp.textContent = `플레이어 HP: ${Math.ceil(pState.hp)} / ${Math.ceil(pState.maxHp)}  MP: ${Math.ceil(pState.mp)} / ${Math.ceil(pState.maxMp)}`;
+    hud.enemyHp.textContent = `적 HP: ${Math.ceil(eState.hp)} / ${Math.ceil(eState.maxHp)}`;
+    hud.actionFeedback.textContent = pState.feedback;
+
+    if (battle.getPhase() === "clear") {
+      hud.battleMessage.textContent = "층 클리어";
+      if (!progression.innerWorld.active) {
+        enterInnerWorld();
+      }
+    } else if (battle.getPhase() === "defeat") {
+      hud.battleMessage.textContent = "패배";
+      input.setEnabled(false);
+    } else {
+      hud.battleMessage.textContent = "";
+    }
   });
 
   return scene;

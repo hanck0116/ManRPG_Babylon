@@ -72,6 +72,10 @@ html, body {
   color: #7dd3fc;
 }
 
+#floorInfo, #progressInfo {
+  font-weight: bold;
+}
+
 #actionButtons {
   position: fixed;
   right: 20px;
@@ -96,4 +100,42 @@ html, body {
 #actionButtons button:active,
 #actionButtons button.is-active {
   background: rgba(255, 120, 120, 0.65);
+}
+
+#innerWorld {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(4, 6, 12, 0.82);
+  color: #fff;
+  font-family: Arial, sans-serif;
+  padding: 20px;
+}
+
+#innerWorld.hidden,
+.hidden {
+  display: none !important;
+}
+
+#rewardChoices {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+#rewardChoices button,
+#rerollBtn,
+#nextFloorBtn,
+#statList button {
+  min-height: 44px;
+  font-size: 15px;
+  padding: 8px 12px;
+  margin: 4px;
+}
+
+#statList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
