@@ -34,6 +34,14 @@
     return false;
   }
 
+
+
+  function consumeSkillResetTicket(inventory) {
+    if (!inventory || inventory.skillResetTicketCount <= 0) return false;
+    inventory.skillResetTicketCount -= 1;
+    return true;
+  }
   global.createInventoryState = createInventoryState;
   global.useMartialManual = useMartialManual;
+  global.consumeSkillResetTicket = consumeSkillResetTicket;
 })(window);

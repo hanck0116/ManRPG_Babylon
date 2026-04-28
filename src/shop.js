@@ -8,6 +8,7 @@
     if (key === "buy_internal" && p.coins >= 10) { p.coins -= 10; inv.internalManualCount += 1; return true; }
     if (key === "buy_sword" && p.coins >= 30) { p.coins -= 30; inv.swordEnergyCount += 1; return true; }
     if (key === "buy_ticket" && p.coins >= 8) { p.coins -= 8; inv.martialManualTicket += 1; return true; }
+    if (key === "buy_skill_reset" && p.coins >= 25) { p.coins -= 25; inv.skillResetTicketCount += 1; return true; }
 
     return false;
   }

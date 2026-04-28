@@ -38,12 +38,13 @@ function createProgressionState() {
     currentRewards: [],
     currentEnemyData: { skills: [] },
     innerWorld: createInnerWorldState(),
+    skills: createSkillState(),
   };
 }
 
 function createInputController(scene) {
   const keys = { w: false, a: false, s: false, d: false };
-  const action = { attackPressed: false, dodgePressed: false, guardHeld: false, magicPressed: false, lockToggle: false };
+  const action = { attackPressed: false, dodgePressed: false, guardHeld: false, magicPressed: false, lockToggle: false, skillPressed: false, skillSelectPressed: false };
   let enabled = true;
 
   const joystickRoot = document.getElementById("mobileJoystick");
@@ -54,6 +55,8 @@ function createInputController(scene) {
   const guardBtn = document.getElementById("guardBtn");
   const magicBtn = document.getElementById("magicBtn");
   const lockBtn = document.getElementById("lockBtn");
+  const skillBtn = document.getElementById("skillBtn");
+  const skillSelectBtn = document.getElementById("skillSelectBtn");
 
   const movement = { keyboard: new BABYLON.Vector2(), joystick: new BABYLON.Vector2() };
   const keyMap = { KeyW: "w", KeyA: "a", KeyS: "s", KeyD: "d" };
@@ -70,6 +73,8 @@ function createInputController(scene) {
       action.guardHeld = false;
       action.magicPressed = false;
       action.lockToggle = false;
+      action.skillPressed = false;
+      action.skillSelectPressed = false;
       joystickKnob.style.left = "50%";
       joystickKnob.style.top = "50%";
     }
@@ -121,6 +126,16 @@ function createInputController(scene) {
   bindPressButton(
     lockBtn,
     () => (action.lockToggle = true),
+    () => {}
+  );
+  bindPressButton(
+    skillBtn,
+    () => (action.skillPressed = true),
+    () => {}
+  );
+  bindPressButton(
+    skillSelectBtn,
+    () => (action.skillSelectPressed = true),
     () => {}
   );
 
@@ -179,6 +194,8 @@ function createInputController(scene) {
     if ((code === "ShiftLeft" || code === "ShiftRight") && isDown) action.dodgePressed = true;
     if (code === "KeyQ" && isDown) action.magicPressed = true;
     if (code === "KeyR" && isDown) action.lockToggle = true;
+    if (code === "KeyE" && isDown) action.skillPressed = true;
+    if (code === "KeyC" && isDown) action.skillSelectPressed = true;
     if (code === "KeyF") {
       if (isDown) action.guardHeld = true;
       if (isUp) action.guardHeld = false;
@@ -193,6 +210,8 @@ function createInputController(scene) {
       action.dodgePressed = false;
       action.magicPressed = false;
       action.lockToggle = false;
+      action.skillPressed = false;
+      action.skillSelectPressed = false;
       return out;
     },
     getMoveInput() {
@@ -211,6 +230,8 @@ function createInputController(scene) {
       attackBtn.disabled = !state.attack;
       dodgeBtn.disabled = !state.dodge;
       magicBtn.disabled = !state.magic;
+      skillBtn.disabled = !state.skill;
+      skillSelectBtn.disabled = !state.skillSelect;
       lockBtn.classList.toggle("is-active", !!state.locked);
     },
   };
@@ -358,6 +379,74 @@ function createBattleSystem(scene, player, progression) {
     return { casted: true, mpCost: spell.mpCost };
   }
 
+  function getSkillPower(skill) {
+    const base = progression.growth.state.officialDerivedStats?.basicAttackDamage
+      || progression.growth.state.derivedStats.attackDamage
+      || playerState.attackDamage
+      || 1;
+    return Math.max(1, Math.floor(base * (skill.tierMultiplier || 1)));
+  }
+
+  function castSkill(skill) {
+    const nowSec = performance.now() / 1000;
+    const usable = canUseSkill(skill, playerState, nowSec, progression);
+    if (!usable.ok) {
+      playerState.feedback = usable.reason === "mp" ? "MP 부족" : "스킬 대기중";
+      playerState.feedbackTimer = 0.24;
+      return false;
+    }
+
+    playerState.mp -= skill.mpCost;
+    const forward = getFacing(player);
+    const skillPower = getSkillPower(skill);
+    const type = skill.type;
+
+    if (type === "melee") {
+      if (enemy) {
+        const toEnemy = enemy.position.subtract(player.position);
+        toEnemy.y = 0;
+        if (toEnemy.length() <= 2.3) {
+          toEnemy.normalize();
+          if (BABYLON.Vector3.Dot(forward, toEnemy) >= 0.05) {
+            dealDamageToEnemy(skillPower);
+          }
+        }
+      }
+    } else if (type === "projectile") {
+      const b = BABYLON.MeshBuilder.CreateSphere(`skill_${Date.now()}`, { diameter: 0.4 }, scene);
+      b.position = player.position.add(forward.scale(0.95)).add(new BABYLON.Vector3(0, 0.7, 0));
+      const m = new BABYLON.StandardMaterial(`skillMat_${Date.now()}`, scene);
+      m.emissiveColor = skill.isMandala ? new BABYLON.Color3(0.9, 0.3, 1) : new BABYLON.Color3(0.3, 0.8, 1);
+      b.material = m;
+      projectileState.push({ mesh: b, dir: forward, speed: 16, remain: 16, damage: skillPower * (skill.isMandala ? 1.2 : 1) });
+    } else if (type === "area") {
+      if (enemy) {
+        const dist = BABYLON.Vector3.Distance(player.position, enemy.position);
+        if (dist <= (skill.isMandala ? 6 : 4.4)) {
+          dealDamageToEnemy(skillPower * (skill.isMandala ? 1.25 : 1));
+        }
+      }
+      spawnFx(player.position.add(new BABYLON.Vector3(0, 0.4, 0)), new BABYLON.Color3(0.7, 0.7, 1));
+    } else if (type === "buff") {
+      playerState.attackDamage += Math.max(1, Math.floor(skillPower * 0.08));
+      playerState.moveSpeed += 0.25;
+    } else if (type === "defense") {
+      playerState.guardHeld = true;
+      playerState.invincible = true;
+      setTimeout(() => {
+        playerState.invincible = false;
+      }, 900);
+    } else if (type === "movement") {
+      player.position.addInPlace(forward.scale(skill.isMandala ? 4.4 : 3.4));
+      clampInsideArena(player.position);
+    }
+
+    markSkillUsed(skill, nowSec, progression);
+    playerState.feedback = `${skill.name} 발동`;
+    playerState.feedbackTimer = 0.3;
+    return true;
+  }
+
   return {
     setupForFloor(floor) { recomputePlayerFromStats(); spawnEnemyForFloor(floor); player.position.set(0, 1, 0); player.rotationQuaternion = BABYLON.Quaternion.Identity(); },
     refreshDerivedStats() { recomputePlayerFromStats(); },
@@ -379,6 +468,18 @@ function createBattleSystem(scene, player, progression) {
         if (result.casted) {
           const reduction = Math.min(1, progression.multiCastingCount * 0.1);
           playerState.magicCooldown = result.mpCost * 0.03 * (1 - reduction);
+        }
+      }
+      if (actions.skillSelectPressed) {
+        selectNextBattleSkill(progression);
+      }
+      if (actions.skillPressed) {
+        const slotId = progression.skills.selectedSlotId;
+        const skill = slotId ? progression.skills.slots[slotId] : null;
+        if (skill) castSkill(skill);
+        else {
+          playerState.feedback = "사용 가능한 스킬 없음";
+          playerState.feedbackTimer = 0.2;
         }
       }
       if (playerState.attackTimer > 0) {
@@ -438,7 +539,16 @@ function createBattleSystem(scene, player, progression) {
     getCooldownState() {
       const equipped = progression.inventory.magicList.find((s) => s.id === progression.equippedMagicId);
       const mpCost = equipped ? equipped.mpCost : 99999;
-      return { attack: playerState.attackCooldown <= 0, dodge: playerState.dodgeCooldown <= 0 && !playerState.dodging, magic: playerState.magicCooldown <= 0 && playerState.mp >= mpCost };
+      const selectedSkill = progression.skills.selectedSlotId ? progression.skills.slots[progression.skills.selectedSlotId] : null;
+      const nowSec = performance.now() / 1000;
+      const skillOk = selectedSkill ? canUseSkill(selectedSkill, playerState, nowSec, progression).ok : false;
+      return {
+        attack: playerState.attackCooldown <= 0,
+        dodge: playerState.dodgeCooldown <= 0 && !playerState.dodging,
+        magic: playerState.magicCooldown <= 0 && playerState.mp >= mpCost,
+        skill: skillOk,
+        skillSelect: !!getCreatedSkills(progression).length,
+      };
     },
     setPlayerEmissive(playerMat) {
       if (playerState.dodging) playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.9, 1);
@@ -497,6 +607,8 @@ function createScene() {
     enemyHp: document.getElementById("enemyHp"),
     mantraInfo: document.getElementById("mantraInfo"),
     spellInfo: document.getElementById("spellInfo"),
+    skillInfo: document.getElementById("skillInfo"),
+    skillCooldownInfo: document.getElementById("skillCooldownInfo"),
     magicCooldownInfo: document.getElementById("magicCooldownInfo"),
     manualInfo: document.getElementById("manualInfo"),
     swordStageInfo: document.getElementById("swordStageInfo"),
@@ -513,6 +625,15 @@ function createScene() {
     statPanel: document.getElementById("statPanel"),
     statList: document.getElementById("statList"),
     statDoneBtn: document.getElementById("statDoneBtn"),
+    skillCreatePanel: document.getElementById("skillCreatePanel"),
+    pendingSkillText: document.getElementById("pendingSkillText"),
+    skillNameInput: document.getElementById("skillNameInput"),
+    autoSkillNameBtn: document.getElementById("autoSkillNameBtn"),
+    skillTypeSelect: document.getElementById("skillTypeSelect"),
+    skillAttributeSelect: document.getElementById("skillAttributeSelect"),
+    skillDescInput: document.getElementById("skillDescInput"),
+    createSkillBtn: document.getElementById("createSkillBtn"),
+    skillCreateResult: document.getElementById("skillCreateResult"),
     nextFloorBtn: document.getElementById("nextFloorBtn"),
     manualPanel: document.getElementById("manualPanel"),
     manualCounts: document.getElementById("manualCounts"),
@@ -532,6 +653,7 @@ function createScene() {
     buyInternalBtn: document.getElementById("buyInternalBtn"),
     buySwordBtn: document.getElementById("buySwordBtn"),
     buyTicketBtn: document.getElementById("buyTicketBtn"),
+    buySkillResetBtn: document.getElementById("buySkillResetBtn"),
     drawTicketBtn: document.getElementById("drawTicketBtn"),
     sellExternalBtn: document.getElementById("sellExternalBtn"),
     sellInternalBtn: document.getElementById("sellInternalBtn"),
@@ -539,6 +661,19 @@ function createScene() {
     shopDoneBtn: document.getElementById("shopDoneBtn"),
   };
   const magicSelect = document.getElementById("magicSelect");
+  setSkillPlayerContext(progression);
+  SKILL_TYPES.forEach((type) => {
+    const op = document.createElement("option");
+    op.value = type;
+    op.textContent = type;
+    ui.skillTypeSelect.appendChild(op);
+  });
+  SKILL_ATTRIBUTES.forEach((attr) => {
+    const op = document.createElement("option");
+    op.value = attr;
+    op.textContent = attr;
+    ui.skillAttributeSelect.appendChild(op);
+  });
 
   function enterInnerWorld() {
     if (progression.innerWorld.rewardGranted) return;
@@ -547,6 +682,7 @@ function createScene() {
     progression.innerWorld.step = "recovery";
     progression.innerWorld.rewardChosen = false;
     progression.innerWorld.statsDone = false;
+    progression.innerWorld.skillCreatedDone = false;
     battle.recoverFull();
 
     progression.level += 5;
@@ -647,24 +783,28 @@ function createScene() {
   }
 
   function renderInnerWorld() {
+    const pendingSkillSlot = getPendingSkillSlot(progression);
     const step = progression.innerWorld.step;
     ui.innerStepText.textContent =
       step === "reward"
         ? "순서 1/6: 보상 선택"
         : step === "stats"
           ? "순서 2/6: 스탯 투자"
-          : step === "skill"
-            ? "순서 3/6: 무공서 사용"
-            : step === "spellBook"
-              ? "순서 4/6: 마법서 행동"
-              : step === "shop"
-                ? "순서 5/6: 상점"
+          : step === "skillCreate"
+            ? "순서 3/6: 스킬 생성"
+            : step === "skill"
+              ? "순서 4/6: 무공서/마법서/상점 행동"
+              : step === "spellBook"
+                ? "순서 4/6: 무공서/마법서/상점 행동"
+                : step === "shop"
+                  ? "순서 5/6: 상점"
           : step === "next"
             ? "순서 6/6: 다음 층 진입"
             : "회복";
 
     ui.rewardPanel.classList.toggle("hidden", step !== "reward");
     ui.statPanel.classList.toggle("hidden", step !== "stats");
+    ui.skillCreatePanel.classList.toggle("hidden", step !== "skillCreate");
     ui.manualPanel.classList.toggle("hidden", step !== "skill");
     ui.spellBookPanel.classList.toggle("hidden", step !== "spellBook");
     ui.shopPanel.classList.toggle("hidden", step !== "shop");
@@ -672,6 +812,12 @@ function createScene() {
 
     if (step === "reward") renderRewardPanel();
     if (step === "stats") renderStatPanel();
+    if (step === "skillCreate") {
+      ui.pendingSkillText.textContent = pendingSkillSlot
+        ? `현재 생성 대상: ${getPendingSkillLabel(progression)}`
+        : "생성할 스킬 없음";
+      ui.createSkillBtn.disabled = !pendingSkillSlot;
+    }
     if (step === "skill") {
       ui.manualCounts.textContent = `외공서 ${progression.inventory.externalManualCount} / 내공서 ${progression.inventory.internalManualCount} / 검기 ${progression.inventory.swordEnergyCount}`;
     }
@@ -682,6 +828,9 @@ function createScene() {
       ui.learnedMagicList.textContent = progression.inventory.magicList.length
         ? `습득 마법: ${progression.inventory.magicList.map((m) => m.name).join(", ")}`
         : "습득 마법 없음";
+    }
+    if (step === "next") {
+      ui.nextFloorBtn.disabled = !!pendingSkillSlot;
     }
   }
 
@@ -711,7 +860,35 @@ function createScene() {
   ui.statDoneBtn.addEventListener("click", () => {
     if (progression.innerWorld.step !== "stats") return;
     progression.innerWorld.statsDone = true;
-    progression.innerWorld.step = "skill";
+    progression.innerWorld.step = getPendingSkillSlot(progression) ? "skillCreate" : "skill";
+    renderInnerWorld();
+  });
+
+  ui.autoSkillNameBtn.addEventListener("click", () => {
+    const slotId = getPendingSkillSlot(progression);
+    if (!slotId) return;
+    const meta = getSkillSlotMeta(slotId);
+    ui.skillNameInput.value = `${meta?.label || slotId} ${ui.skillTypeSelect.value || "skill"}`;
+  });
+
+  ui.createSkillBtn.addEventListener("click", () => {
+    if (progression.innerWorld.step !== "skillCreate") return;
+    const slotId = getPendingSkillSlot(progression);
+    if (!slotId) return;
+    const result = createSkill(slotId, {
+      name: ui.skillNameInput.value,
+      type: ui.skillTypeSelect.value,
+      attribute: ui.skillAttributeSelect.value,
+      description: ui.skillDescInput.value,
+    });
+    ui.skillCreateResult.textContent = result.ok ? `${result.skill.name} 생성 완료` : `실패: ${result.reason}`;
+    if (result.ok) {
+      ui.skillNameInput.value = "";
+      ui.skillDescInput.value = "";
+      if (!getPendingSkillSlot(progression)) {
+        progression.innerWorld.step = "skill";
+      }
+    }
     renderInnerWorld();
   });
 
@@ -768,6 +945,7 @@ function createScene() {
   ui.buyInternalBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_internal"); renderInnerWorld(); });
   ui.buySwordBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_sword"); renderInnerWorld(); });
   ui.buyTicketBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_ticket"); renderInnerWorld(); });
+  ui.buySkillResetBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_skill_reset"); renderInnerWorld(); });
   ui.sellExternalBtn.addEventListener("click", () => { sellShopItem(shopCtx(), "sell_external"); renderInnerWorld(); });
   ui.sellInternalBtn.addEventListener("click", () => { sellShopItem(shopCtx(), "sell_internal"); renderInnerWorld(); });
   ui.sellSwordBtn.addEventListener("click", () => { sellShopItem(shopCtx(), "sell_sword"); renderInnerWorld(); });
@@ -787,6 +965,7 @@ function createScene() {
 
   ui.nextFloorBtn.addEventListener("click", () => {
     if (progression.innerWorld.step !== "next") return;
+    if (getPendingSkillSlot(progression)) return;
     leaveInnerWorldToNextFloor();
   });
 
@@ -862,6 +1041,11 @@ function createScene() {
     const equippedSpell = progression.inventory.magicList.find((s) => s.id === progression.equippedMagicId);
     hud.spellInfo.textContent = `마법: ${equippedSpell ? equippedSpell.name : "-"}`;
     hud.magicCooldownInfo.textContent = `마법 쿨타임: ${Math.max(0, pState.magicCooldown || 0).toFixed(1)}s`;
+    const selectedSkill = progression.skills.selectedSlotId ? progression.skills.slots[progression.skills.selectedSlotId] : null;
+    const nowSec = performance.now() / 1000;
+    const remain = selectedSkill ? Math.max(0, (progression.skills.cooldowns[selectedSkill.slotId] || 0) - nowSec) : 0;
+    hud.skillInfo.textContent = `스킬: ${selectedSkill ? `${selectedSkill.name} (${selectedSkill.slotId})` : "-"}`;
+    hud.skillCooldownInfo.textContent = `스킬 쿨타임: ${remain.toFixed(1)}s`;
     hud.manualInfo.textContent = `외공서 ${progression.inventory.externalManualCount} | 내공서 ${progression.inventory.internalManualCount} | 검기 ${progression.inventory.swordEnergyCount}`;
     const swordData = SWORD_STAGE_DATA[progression.swordStage] || SWORD_STAGE_DATA[0];
     hud.swordStageInfo.textContent = `검기 단계: ${swordData.name} (${progression.swordStage})`;

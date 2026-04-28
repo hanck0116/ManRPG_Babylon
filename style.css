@@ -159,3 +159,20 @@ html, body {
   flex-wrap: wrap;
   gap: 6px;
 }
+
+#skillCreatePanel label {
+  display: block;
+  margin: 8px 0;
+}
+
+#skillCreatePanel input,
+#skillCreatePanel select,
+#skillCreatePanel textarea {
+  width: min(420px, 100%);
+  margin-top: 4px;
+}
+
+#skillCreateResult {
+  margin-top: 8px;
+  color: #7dd3fc;
+}

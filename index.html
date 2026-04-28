@@ -16,6 +16,8 @@
     <div id="enemyHp">적 HP: 100 / 100</div>
     <div id="mantraInfo">만트라: 화염</div>
     <div id="spellInfo">마법: 화염구</div>
+    <div id="skillInfo">스킬: -</div>
+    <div id="skillCooldownInfo">스킬 쿨타임: 0.0s</div>
     <select id="magicSelect"></select>
     <div id="magicCooldownInfo">마법 쿨타임: 0.0s</div>
     <div id="manualInfo">외공서 0 | 내공서 0 | 검기 0</div>
@@ -35,6 +37,8 @@
     <button id="guardBtn" type="button">가드</button>
     <button id="magicBtn" type="button">마법</button>
     <button id="lockBtn" type="button">락온</button>
+    <button id="skillSelectBtn" type="button">스킬변경</button>
+    <button id="skillBtn" type="button">스킬</button>
   </div>
   <div id="innerWorld" class="hidden">
     <h2>심상세계</h2>
@@ -43,6 +47,24 @@
       <h3>보상 선택 (2개 중 1개)</h3>
       <div id="rewardChoices"></div>
       <button id="rerollBtn" type="button">리롤(코인 1)</button>
+    </div>
+
+    <div id="skillCreatePanel" class="hidden">
+      <h3>스킬 생성</h3>
+      <div id="pendingSkillText"></div>
+      <label>이름 <input id="skillNameInput" type="text" placeholder="스킬 이름"></label>
+      <button id="autoSkillNameBtn" type="button">자동 이름 생성</button>
+      <label>타입
+        <select id="skillTypeSelect"></select>
+      </label>
+      <label>속성
+        <select id="skillAttributeSelect"></select>
+      </label>
+      <label>설명
+        <textarea id="skillDescInput" rows="2" placeholder="설명"></textarea>
+      </label>
+      <button id="createSkillBtn" type="button">생성</button>
+      <div id="skillCreateResult"></div>
     </div>
     <div id="manualPanel" class="hidden">
       <h3>무공서</h3>
@@ -67,6 +89,7 @@
       <button id="buyInternalBtn" type="button">내공서 구매(10코인)</button>
       <button id="buySwordBtn" type="button">검기 구매(30코인)</button>
       <button id="buyTicketBtn" type="button">무공서 뽑기권 구매(8코인)</button>
+      <button id="buySkillResetBtn" type="button">스킬 초기화권 구매(25코인)</button>
       <button id="drawTicketBtn" type="button">뽑기권 사용</button>
       <button id="sellExternalBtn" type="button">외공서 판매(5코인)</button>
       <button id="sellInternalBtn" type="button">내공서 판매(5코인)</button>
@@ -88,6 +111,10 @@
   <script src="src/magicData.js"></script>
   <script src="src/spellBooks.js"></script>
   <script src="src/shop.js"></script>
+  <script src="src/skillData.js"></script>
+  <script src="src/skills.js"></script>
+  <script src="src/skillSystem.js"></script>
+  <script src="src/skillUI.js"></script>
   <script src="src/innerWorld.js"></script>
   <script src="src/ui.js"></script>
   <script src="src/maps/floorMaps.js"></script>
