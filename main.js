@@ -34,6 +34,22 @@ function createProgressionState() {
     level: 1,
     statPoints: 0,
     coins: 0,
+    mantra: "화염",
+    spellSlots: {
+      equipped: "firebolt",
+      known: [
+        {
+          id: "firebolt",
+          name: "화염구",
+          mantra: "화염",
+          mpCost: 14,
+          damageScale: 1.25,
+          speed: 16,
+          radius: 0.18,
+          range: 14,
+        },
+      ],
+    },
     stats: { ...BASE_STATS },
     bonus: {
       maxHp: 0,
@@ -55,7 +71,7 @@ function createProgressionState() {
 
 function createInputController(scene) {
   const keys = { w: false, a: false, s: false, d: false };
-  const action = { attackPressed: false, dodgePressed: false, guardHeld: false };
+  const action = { attackPressed: false, dodgePressed: false, guardHeld: false, magicPressed: false };
   let enabled = true;
 
   const joystickRoot = document.getElementById("mobileJoystick");
@@ -64,6 +80,7 @@ function createInputController(scene) {
   const attackBtn = document.getElementById("attackBtn");
   const dodgeBtn = document.getElementById("dodgeBtn");
   const guardBtn = document.getElementById("guardBtn");
+  const magicBtn = document.getElementById("magicBtn");
 
   const movement = { keyboard: new BABYLON.Vector2(), joystick: new BABYLON.Vector2() };
   const keyMap = { KeyW: "w", KeyA: "a", KeyS: "s", KeyD: "d" };
@@ -78,6 +95,7 @@ function createInputController(scene) {
       action.attackPressed = false;
       action.dodgePressed = false;
       action.guardHeld = false;
+      action.magicPressed = false;
       joystickKnob.style.left = "50%";
       joystickKnob.style.top = "50%";
     }
@@ -120,6 +138,11 @@ function createInputController(scene) {
     guardBtn,
     () => (action.guardHeld = true),
     () => (action.guardHeld = false)
+  );
+  bindPressButton(
+    magicBtn,
+    () => (action.magicPressed = true),
+    () => {}
   );
 
   function updateJoystick(clientX, clientY) {
@@ -175,6 +198,7 @@ function createInputController(scene) {
 
     if (code === "Space" && isDown) action.attackPressed = true;
     if ((code === "ShiftLeft" || code === "ShiftRight") && isDown) action.dodgePressed = true;
+    if (code === "KeyQ" && isDown) action.magicPressed = true;
     if (code === "KeyF") {
       if (isDown) action.guardHeld = true;
       if (isUp) action.guardHeld = false;
@@ -187,6 +211,7 @@ function createInputController(scene) {
       const out = { ...action };
       action.attackPressed = false;
       action.dodgePressed = false;
+      action.magicPressed = false;
       return out;
     },
     getMoveInput() {
@@ -249,6 +274,8 @@ function createBattleSystem(scene, player, progression) {
     attackCooldown: 0,
     attackHitDone: false,
   };
+  const projectileState = [];
+  let arenaRadius = 8.2;
 
   const battle = { phase: "playing" };
 
@@ -257,6 +284,7 @@ function createBattleSystem(scene, player, progression) {
     const b = progression.bonus;
     playerState.maxHp = 100 + s.vitality * 8 + b.maxHp;
     playerState.maxMp = 100 + s.intelligence * 5;
+    playerState.mpRegen = 0.8 + s.wisdom * 0.08;
     playerState.moveSpeed = 3.5 + s.agility * 0.08 + b.moveSpeed;
     playerState.attackDamage = 8 + s.strength * 1.6 + b.attack;
     playerState.critChance = clamp01(0.05 + s.luck * 0.004 + b.critChance);
@@ -322,6 +350,49 @@ function createBattleSystem(scene, player, progression) {
     }
   }
 
+  function clampInsideArena(position) {
+    const radius = arenaRadius - 0.35;
+    const len = Math.hypot(position.x, position.z);
+    if (len > radius && len > 0.0001) {
+      const scale = radius / len;
+      position.x *= scale;
+      position.z *= scale;
+    }
+  }
+
+  function getEquippedSpell() {
+    return progression.spellSlots.known.find((s) => s.id === progression.spellSlots.equipped) || null;
+  }
+
+  function castMagic() {
+    const spell = getEquippedSpell();
+    if (!spell || !enemy) return;
+    if (playerState.mp < spell.mpCost) {
+      playerState.feedback = "MP 부족";
+      playerState.feedbackTimer = 0.2;
+      return;
+    }
+
+    playerState.mp -= spell.mpCost;
+    playerState.feedback = "마법";
+    playerState.feedbackTimer = 0.2;
+
+    const forward = getFacing(player);
+    const bullet = BABYLON.MeshBuilder.CreateSphere(`magic_${Date.now()}`, { diameter: spell.radius * 2 }, scene);
+    bullet.position = player.position.add(forward.scale(0.9)).add(new BABYLON.Vector3(0, 0.6, 0));
+    const mat = new BABYLON.StandardMaterial(`magicMat_${Date.now()}`, scene);
+    mat.emissiveColor = new BABYLON.Color3(1, 0.45, 0.18);
+    bullet.material = mat;
+
+    projectileState.push({
+      mesh: bullet,
+      dir: forward,
+      speed: spell.speed,
+      remain: spell.range,
+      damage: playerState.attackDamage * spell.damageScale,
+    });
+  }
+
   function dealDamageToPlayer(amount) {
     if (playerState.invincible) return;
 
@@ -351,15 +422,26 @@ function createBattleSystem(scene, player, progression) {
       spawnEnemyForFloor(floor);
       player.position.set(0, 1, 0);
       player.rotationQuaternion = BABYLON.Quaternion.Identity();
-      recoverFull();
+      playerState.hp = Math.min(playerState.hp, playerState.maxHp);
+      playerState.mp = Math.min(playerState.mp, playerState.maxMp);
     },
     recoverFull,
+    setArenaRadius(radius) {
+      arenaRadius = radius;
+      clampInsideArena(player.position);
+      if (enemy) clampInsideArena(enemy.position);
+    },
+    clampAllInsideArena() {
+      clampInsideArena(player.position);
+      if (enemy) clampInsideArena(enemy.position);
+    },
     update(delta, moveDir, actions) {
       if (battle.phase !== "playing") return;
 
       playerState.attackCooldown = Math.max(0, playerState.attackCooldown - delta);
       enemyState.attackCooldown = Math.max(0, enemyState.attackCooldown - delta);
       playerState.guardHeld = !!actions.guardHeld && !playerState.dodging;
+      playerState.mp = Math.min(playerState.maxMp, playerState.mp + playerState.mpRegen * delta);
 
       if (actions.attackPressed && playerState.attackCooldown <= 0 && !playerState.dodging) {
         playerState.attackTimer = 0.16;
@@ -375,6 +457,9 @@ function createBattleSystem(scene, player, progression) {
         playerState.invincible = true;
         playerState.feedback = "회피";
         playerState.feedbackTimer = 0.16;
+      }
+      if (actions.magicPressed) {
+        castMagic();
       }
 
       if (playerState.attackTimer > 0) {
@@ -401,6 +486,7 @@ function createBattleSystem(scene, player, progression) {
       if (playerState.dodging) {
         const dodgeDir = moveDir.lengthSquared() > 0 ? moveDir : getFacing(player);
         player.position.addInPlace(dodgeDir.scale(playerState.dodgeSpeed * delta));
+        clampInsideArena(player.position);
         playerState.dodgeTimer -= delta;
         if (playerState.dodgeTimer < 0.12) playerState.invincible = false;
         if (playerState.dodgeTimer <= 0) {
@@ -422,6 +508,7 @@ function createBattleSystem(scene, player, progression) {
 
       if (distToPlayer > enemyState.attackRange && distToPlayer < enemyState.chaseRange) {
         enemy.position.addInPlace(toPlayer.normalize().scale(enemyState.moveSpeed * delta));
+        clampInsideArena(enemy.position);
       } else if (enemyState.attackCooldown <= 0 && distToPlayer <= enemyState.attackRange) {
         enemyState.attackTimer = 0.22;
         enemyState.attackCooldown = 1.2;
@@ -433,6 +520,24 @@ function createBattleSystem(scene, player, progression) {
         if (!enemyState.attackHitDone && distToPlayer <= enemyState.attackRange + 0.1) {
           enemyState.attackHitDone = true;
           dealDamageToPlayer(enemyState.attackDamage);
+        }
+      }
+
+      for (let i = projectileState.length - 1; i >= 0; i--) {
+        const p = projectileState[i];
+        const step = p.speed * delta;
+        p.mesh.position.addInPlace(p.dir.scale(step));
+        p.remain -= step;
+        if (enemy) {
+          const dist = BABYLON.Vector3.Distance(p.mesh.position, enemy.position.add(new BABYLON.Vector3(0, 0.7, 0)));
+          if (dist <= 0.8) {
+            dealDamageToEnemy(p.damage);
+            p.remain = 0;
+          }
+        }
+        if (p.remain <= 0) {
+          p.mesh.dispose();
+          projectileState.splice(i, 1);
         }
       }
 
@@ -454,6 +559,8 @@ function createBattleSystem(scene, player, progression) {
       enemy = null;
       enemyFront = null;
       enemyMat = null;
+      projectileState.forEach((p) => p.mesh.dispose());
+      projectileState.length = 0;
     },
     getPhase() {
       return battle.phase;
@@ -505,13 +612,17 @@ function createScene() {
   const input = createInputController(scene);
   const battle = createBattleSystem(scene, player, progression);
   battle.setupForFloor(progression.floor);
-  mapManager.showFloorCombatMap(battle.getEnemyDescriptor(), { floor: progression.floor, level: progression.level });
+  const initialMap = mapManager.showFloorCombatMap(battle.getEnemyDescriptor(), { floor: progression.floor, level: progression.level });
+  battle.setArenaRadius(initialMap.bounds?.arenaRadius || 8.2);
 
   const hud = {
     floorInfo: document.getElementById("floorInfo"),
     progressInfo: document.getElementById("progressInfo"),
     playerHp: document.getElementById("playerHp"),
+    playerMp: document.getElementById("playerMp"),
     enemyHp: document.getElementById("enemyHp"),
+    mantraInfo: document.getElementById("mantraInfo"),
+    spellInfo: document.getElementById("spellInfo"),
     battleMessage: document.getElementById("battleMessage"),
     actionFeedback: document.getElementById("actionFeedback"),
   };
@@ -559,7 +670,8 @@ function createScene() {
     ui.inner.classList.add("hidden");
     input.setEnabled(true);
     battle.setupForFloor(progression.floor);
-    mapManager.showFloorCombatMap(battle.getEnemyDescriptor(), { floor: progression.floor, level: progression.level });
+    const floorMap = mapManager.showFloorCombatMap(battle.getEnemyDescriptor(), { floor: progression.floor, level: progression.level });
+    battle.setArenaRadius(floorMap.bounds?.arenaRadius || 8.2);
     gameMode = MAP_STATE.FLOOR_COMBAT;
     camera.radius = 11;
     camera.beta = Math.PI / 3.2;
@@ -680,6 +792,7 @@ function createScene() {
       moveDir.lengthSquared() > 0
     ) {
       player.position.addInPlace(moveDir.scale(pState.moveSpeed * dt));
+      battle.clampAllInsideArena();
     }
 
     battle.setPlayerEmissive(playerMat);
@@ -688,11 +801,15 @@ function createScene() {
     const eState = battle.getEnemyState();
     hud.floorInfo.textContent = `Floor: ${progression.floor}`;
     hud.progressInfo.textContent = `Lv ${progression.level} | Stat Pts ${progression.statPoints} | Coin ${progression.coins}`;
-    hud.playerHp.textContent = `플레이어 HP: ${Math.ceil(pState.hp)} / ${Math.ceil(pState.maxHp)}  MP: ${Math.ceil(pState.mp)} / ${Math.ceil(pState.maxMp)}`;
+    hud.playerHp.textContent = `플레이어 HP: ${Math.ceil(pState.hp)} / ${Math.ceil(pState.maxHp)}`;
+    hud.playerMp.textContent = `플레이어 MP: ${Math.ceil(pState.mp)} / ${Math.ceil(pState.maxMp)}`;
     hud.enemyHp.textContent =
       gameMode === MAP_STATE.FLOOR_COMBAT
         ? `적 HP: ${Math.ceil(eState.hp)} / ${Math.ceil(eState.maxHp)}`
         : "적 HP: -";
+    hud.mantraInfo.textContent = `만트라: ${progression.mantra}`;
+    const equippedSpell = progression.spellSlots.known.find((s) => s.id === progression.spellSlots.equipped);
+    hud.spellInfo.textContent = `마법: ${equippedSpell ? equippedSpell.name : "-"}`;
     hud.actionFeedback.textContent = pState.feedback;
 
     if (gameMode === MAP_STATE.FLOOR_COMBAT && battle.getPhase() === "clear") {

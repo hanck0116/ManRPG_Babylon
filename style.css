@@ -82,6 +82,9 @@ html, body {
   bottom: 20px;
   z-index: 15;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 210px;
   gap: 12px;
 }
 

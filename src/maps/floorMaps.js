@@ -21,6 +21,7 @@
       new BABYLON.Color3(0.17, 0.17, 0.2),
       new BABYLON.Color3(0.03, 0.03, 0.06)
     );
+    floor.checkCollisions = true;
     nodes.push(floor);
 
     const wall = BABYLON.MeshBuilder.CreateCylinder(
@@ -36,6 +37,7 @@
       new BABYLON.Color3(0.02, 0.02, 0.03),
       0.96
     );
+    wall.checkCollisions = true;
     nodes.push(wall);
 
     const rim = BABYLON.MeshBuilder.CreateTorus("floorRoomRim", { diameter: radius * 2.02, thickness: 0.15 }, scene);
@@ -49,7 +51,7 @@
     );
     nodes.push(rim);
 
-    return { nodes, cameraMode: "combat" };
+    return { nodes, cameraMode: "combat", bounds: { arenaRadius: radius - 0.8 } };
   }
 
   function beastArena(scene) {
