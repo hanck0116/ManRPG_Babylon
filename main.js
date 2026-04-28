@@ -237,6 +237,7 @@ function createBattleSystem(scene, player, progression) {
   let enemy = null;
   let enemyFront = null;
   let enemyMat = null;
+  let enemyDescriptor = { type: "default", mapId: "defaultCylinderRoom" };
   const enemyState = {
     hp: 100,
     maxHp: 100,
@@ -270,6 +271,12 @@ function createBattleSystem(scene, player, progression) {
       enemy.dispose();
       enemyFront.dispose();
     }
+
+    const mapRotation = ["defaultCylinderRoom", "beastArena", "mageChamber", "bossVoidRoom"];
+    enemyDescriptor = {
+      type: floor % 4 === 0 ? "boss" : floor % 2 === 0 ? "beast" : "soldier",
+      mapId: mapRotation[(floor - 1) % mapRotation.length],
+    };
 
     enemy = BABYLON.MeshBuilder.CreateCapsule("enemy", { height: 2, radius: 0.4 }, scene);
     enemy.position = new BABYLON.Vector3(0, 1, 5);
@@ -438,6 +445,16 @@ function createBattleSystem(scene, player, progression) {
     getEnemyState() {
       return { ...enemyState, mesh: enemy };
     },
+    getEnemyDescriptor() {
+      return { ...enemyDescriptor };
+    },
+    despawnEnemy() {
+      if (enemy) enemy.dispose();
+      if (enemyFront) enemyFront.dispose();
+      enemy = null;
+      enemyFront = null;
+      enemyMat = null;
+    },
     getPhase() {
       return battle.phase;
     },
@@ -457,6 +474,8 @@ function createBattleSystem(scene, player, progression) {
 function createScene() {
   const scene = new BABYLON.Scene(engine);
   const progression = createProgressionState();
+  const mapManager = createMapManager(scene);
+  let gameMode = MAP_STATE.FLOOR_COMBAT;
 
   const camera = new BABYLON.ArcRotateCamera("camera", Math.PI / 2, Math.PI / 3, 12, new BABYLON.Vector3(0, 1, 0), scene);
   camera.attachControl(canvas, true);
@@ -486,6 +505,7 @@ function createScene() {
   const input = createInputController(scene);
   const battle = createBattleSystem(scene, player, progression);
   battle.setupForFloor(progression.floor);
+  mapManager.showFloorCombatMap(battle.getEnemyDescriptor(), { floor: progression.floor, level: progression.level });
 
   const hud = {
     floorInfo: document.getElementById("floorInfo"),
@@ -519,9 +539,14 @@ function createScene() {
     progression.statPoints += 15;
     progression.coins += 1;
     progression.currentRewards = sampleRewards();
+    battle.despawnEnemy();
 
     input.setEnabled(false);
     ui.inner.classList.remove("hidden");
+    gameMode = MAP_STATE.INNER_WORLD;
+    mapManager.showInnerWorldMap({ floor: progression.floor, level: progression.level });
+    camera.radius = 16;
+    camera.beta = Math.PI / 2.8;
 
     progression.innerWorld.step = "reward";
     renderInnerWorld();
@@ -534,6 +559,10 @@ function createScene() {
     ui.inner.classList.add("hidden");
     input.setEnabled(true);
     battle.setupForFloor(progression.floor);
+    mapManager.showFloorCombatMap(battle.getEnemyDescriptor(), { floor: progression.floor, level: progression.level });
+    gameMode = MAP_STATE.FLOOR_COMBAT;
+    camera.radius = 11;
+    camera.beta = Math.PI / 3.2;
   }
 
   function renderStatPanel() {
@@ -639,10 +668,17 @@ function createScene() {
     }
 
     const actions = input.consumeActions();
-    battle.update(dt, moveDir, actions);
+    if (gameMode === MAP_STATE.FLOOR_COMBAT) {
+      battle.update(dt, moveDir, actions);
+    }
 
     const pState = battle.getPlayerState();
-    if (!pState.dodging && battle.getPhase() === "playing" && moveDir.lengthSquared() > 0) {
+    if (
+      gameMode === MAP_STATE.FLOOR_COMBAT &&
+      !pState.dodging &&
+      battle.getPhase() === "playing" &&
+      moveDir.lengthSquared() > 0
+    ) {
       player.position.addInPlace(moveDir.scale(pState.moveSpeed * dt));
     }
 
@@ -653,15 +689,18 @@ function createScene() {
     hud.floorInfo.textContent = `Floor: ${progression.floor}`;
     hud.progressInfo.textContent = `Lv ${progression.level} | Stat Pts ${progression.statPoints} | Coin ${progression.coins}`;
     hud.playerHp.textContent = `플레이어 HP: ${Math.ceil(pState.hp)} / ${Math.ceil(pState.maxHp)}  MP: ${Math.ceil(pState.mp)} / ${Math.ceil(pState.maxMp)}`;
-    hud.enemyHp.textContent = `적 HP: ${Math.ceil(eState.hp)} / ${Math.ceil(eState.maxHp)}`;
+    hud.enemyHp.textContent =
+      gameMode === MAP_STATE.FLOOR_COMBAT
+        ? `적 HP: ${Math.ceil(eState.hp)} / ${Math.ceil(eState.maxHp)}`
+        : "적 HP: -";
     hud.actionFeedback.textContent = pState.feedback;
 
-    if (battle.getPhase() === "clear") {
+    if (gameMode === MAP_STATE.FLOOR_COMBAT && battle.getPhase() === "clear") {
       hud.battleMessage.textContent = "층 클리어";
       if (!progression.innerWorld.active) {
         enterInnerWorld();
       }
-    } else if (battle.getPhase() === "defeat") {
+    } else if (gameMode === MAP_STATE.FLOOR_COMBAT && battle.getPhase() === "defeat") {
       hud.battleMessage.textContent = "패배";
       input.setEnabled(false);
     } else {
