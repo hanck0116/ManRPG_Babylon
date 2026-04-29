@@ -226,3 +226,18 @@ html, body {
   padding: 12px;
   border-radius: 8px;
 }
+
+#debugMenu {
+  position: fixed;
+  right: 8px;
+  top: 8px;
+  z-index: 90;
+  display: grid;
+  gap: 4px;
+}
+
+#debugMenu button {
+  font-size: 11px;
+  padding: 4px 6px;
+  opacity: 0.85;
+}

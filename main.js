@@ -26,6 +26,7 @@ const GAME_STATE = {
   INNER_WORLD: "INNER_WORLD",
   GAME_OVER: "GAME_OVER",
 };
+const DEBUG_MODE = true;
 
 function clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -57,6 +58,7 @@ function createProgressionState() {
     currentEnemyData: { skills: [] },
     innerWorld: createInnerWorldState(),
     skills: createSkillState(),
+    manualUseCounts: { external: 0, internal: 0 },
   };
 }
 
@@ -554,6 +556,21 @@ function createBattleSystem(scene, player, progression) {
     getCombatState() { return combatState; },
     toggleLockOn() { if (enemy && enemyState.hp > 0) lockOnActive = !lockOnActive; else lockOnActive = false; return lockOnActive; },
     isLockOnActive() { return lockOnActive; },
+    getSnapshot() {
+      return {
+        playerHp: playerState.hp,
+        playerMp: playerState.mp,
+        enemyHp: enemyState.hp,
+        phase: battle.phase,
+      };
+    },
+    applySnapshot(snapshot) {
+      if (!snapshot) return;
+      if (typeof snapshot.playerHp === "number") playerState.hp = Math.max(0, Math.min(playerState.maxHp, snapshot.playerHp));
+      if (typeof snapshot.playerMp === "number") playerState.mp = Math.max(0, Math.min(playerState.maxMp, snapshot.playerMp));
+      if (typeof snapshot.enemyHp === "number") enemyState.hp = Math.max(0, Math.min(enemyState.maxHp, snapshot.enemyHp));
+      if (typeof snapshot.phase === "string") battle.phase = snapshot.phase;
+    },
     getCooldownState() {
       const equipped = progression.inventory.magicList.find((s) => s.id === progression.equippedMagicId);
       const mpCost = equipped ? equipped.mpCost : 99999;
@@ -709,6 +726,14 @@ function createScene() {
     sellInternalBtn: document.getElementById("sellInternalBtn"),
     sellSwordBtn: document.getElementById("sellSwordBtn"),
     shopDoneBtn: document.getElementById("shopDoneBtn"),
+    debugMenu: document.getElementById("debugMenu"),
+    debugSaveBtn: document.getElementById("debugSaveBtn"),
+    debugLoadBtn: document.getElementById("debugLoadBtn"),
+    debugClearBtn: document.getElementById("debugClearBtn"),
+    debugCoinBtn: document.getElementById("debugCoinBtn"),
+    debugLevelBtn: document.getElementById("debugLevelBtn"),
+    debugInnerBtn: document.getElementById("debugInnerBtn"),
+    debugNextFloorBtn: document.getElementById("debugNextFloorBtn"),
   };
   const magicSelect = document.getElementById("magicSelect");
   const actionButtonsWrap = document.getElementById("actionButtons");
@@ -732,6 +757,130 @@ function createScene() {
     document.getElementById("hud").classList.toggle("hidden", !isCombat);
     actionButtonsWrap.classList.toggle("hidden", !isCombat);
     joystickWrap.classList.toggle("hidden", !isCombat);
+  }
+  ui.debugMenu.classList.toggle("hidden", !DEBUG_MODE);
+
+  function buildSavePayload(trigger = "manual") {
+    const snapshot = battle.getSnapshot();
+    return {
+      version: SAVE_VERSION,
+      trigger,
+      gameState,
+      progression: {
+        profile: { ...progression.profile },
+        level: progression.level,
+        floor: progression.floor,
+        coins: progression.coins,
+        statPoints: progression.statPoints,
+        growth: {
+          baseStats: { ...progression.growth.state.baseStats },
+          officialDerivedStats: { ...(progression.growth.state.officialDerivedStats || {}) },
+        },
+        hp: snapshot.playerHp,
+        mp: snapshot.playerMp,
+        mantra: progression.mantra,
+        originalMana: { ...progression.originalMana },
+        inventory: {
+          externalManualCount: progression.inventory.externalManualCount,
+          internalManualCount: progression.inventory.internalManualCount,
+          swordEnergyCount: progression.inventory.swordEnergyCount,
+          spellBooks: [...progression.inventory.spellBooks],
+          grimoires: [...(progression.inventory.grimoires || [])],
+          magicList: [...progression.inventory.magicList],
+          martialManualTicket: progression.inventory.martialManualTicket,
+          skillResetTicketCount: progression.inventory.skillResetTicketCount,
+        },
+        manualUseCounts: { ...progression.manualUseCounts },
+        swordStage: progression.swordStage,
+        multiCastingCount: progression.multiCastingCount,
+        skills: JSON.parse(JSON.stringify(progression.skills)),
+        equippedMagicId: progression.equippedMagicId,
+        innerWorld: { ...progression.innerWorld },
+        floorState: {
+          ...snapshot,
+          currentEnemyData: { ...progression.currentEnemyData },
+        },
+      },
+    };
+  }
+
+  function autosave(trigger) {
+    saveCharacter(buildSavePayload(trigger));
+    ui.continueGameBtn.disabled = !hasSavedCharacter();
+  }
+
+  function applyLoadedProgression(data) {
+    const p = data.progression;
+    progression.profile = { ...p.profile };
+    progression.level = p.level;
+    progression.floor = p.floor;
+    progression.coins = p.coins;
+    progression.statPoints = p.statPoints;
+    progression.mantra = p.mantra;
+    progression.originalMana = { ...p.originalMana };
+    progression.inventory.externalManualCount = p.inventory.externalManualCount;
+    progression.inventory.internalManualCount = p.inventory.internalManualCount;
+    progression.inventory.swordEnergyCount = p.inventory.swordEnergyCount;
+    progression.inventory.spellBooks = [...(p.inventory.spellBooks || [])];
+    progression.inventory.grimoires = [...(p.inventory.grimoires || [])];
+    progression.inventory.magicList = [...(p.inventory.magicList || [])];
+    progression.inventory.martialManualTicket = p.inventory.martialManualTicket || 0;
+    progression.inventory.skillResetTicketCount = p.inventory.skillResetTicketCount || 0;
+    progression.swordStage = p.swordStage || 0;
+    progression.manualUseCounts = { ...p.manualUseCounts };
+    progression.multiCastingCount = p.multiCastingCount || 1;
+    progression.skills = p.skills || createSkillState();
+    progression.equippedMagicId = p.equippedMagicId || null;
+    progression.innerWorld = { ...progression.innerWorld, ...(p.innerWorld || {}) };
+    progression.currentEnemyData = { ...(p.floorState?.currentEnemyData || progression.currentEnemyData) };
+    progression.growth.state.baseStats = { ...progression.growth.state.baseStats, ...(p.growth?.baseStats || {}) };
+    progression.growth.recalculate(progression.swordStage);
+    progression.growth.state.officialDerivedStats = { ...(p.growth?.officialDerivedStats || {}) };
+    setSkillPlayerContext(progression);
+    battle.refreshDerivedStats();
+    battle.applySnapshot({ playerHp: p.hp, playerMp: p.mp });
+    refreshMagicSelect();
+  }
+
+  function restoreFromSaveRecord(record) {
+    if (!record || !record.ok) return false;
+    applyLoadedProgression(record.data);
+    gameState = record.data.gameState || GAME_STATE.TITLE;
+
+    if (gameState === GAME_STATE.FLOOR_COMBAT) {
+      ui.titleScreen.classList.add("hidden");
+      ui.characterCreation.classList.add("hidden");
+      ui.inner.classList.add("hidden");
+      applyGameplayVisibility(true);
+      input.setEnabled(true);
+      battle.setupForFloor(progression.floor);
+      const floorMap = mapManager.showFloorCombatMap(battle.getEnemyDescriptor(), { floor: progression.floor, level: progression.level });
+      battle.setArenaRadius(floorMap.bounds?.arenaRadius || 8.2);
+      battle.applySnapshot(record.data.progression.floorState);
+      gameMode = MAP_STATE.FLOOR_COMBAT;
+      return true;
+    }
+    if (gameState === GAME_STATE.INNER_WORLD) {
+      ui.titleScreen.classList.add("hidden");
+      ui.characterCreation.classList.add("hidden");
+      applyGameplayVisibility(false);
+      input.setEnabled(false);
+      ui.inner.classList.remove("hidden");
+      mapManager.showInnerWorldMap({ floor: progression.floor, level: progression.level });
+      battle.despawnEnemy();
+      gameMode = MAP_STATE.INNER_WORLD;
+      renderInnerWorld();
+      return true;
+    }
+    if (gameState === GAME_STATE.GAME_OVER) {
+      applyGameplayVisibility(false);
+      input.setEnabled(false);
+      ui.titleScreen.classList.remove("hidden");
+      ui.characterCreation.classList.add("hidden");
+      ui.inner.classList.add("hidden");
+      return true;
+    }
+    return false;
   }
 
   function renderCharacterSheetPreview() {
@@ -804,6 +953,12 @@ function createScene() {
   }
 
   function startNewGame() {
+    if (hasSavedCharacter()) {
+      const ok = window.confirm("기존 저장 데이터가 있습니다. 새 게임을 시작하면 삭제됩니다. 진행할까요?");
+      if (!ok) return;
+      clearSave();
+      ui.continueGameBtn.disabled = true;
+    }
     Object.assign(characterForm, resetCharacterCreationForm());
     ui.ccError.textContent = "";
     renderCharacterCreation();
@@ -826,6 +981,7 @@ function createScene() {
     progression.inventory.magicList = [];
     progression.inventory.skillResetTicketCount = 0;
     progression.swordStage = 0;
+    progression.manualUseCounts = { external: 0, internal: 0 };
     progression.skills = createSkillState();
     setSkillPlayerContext(progression);
 
@@ -848,6 +1004,7 @@ function createScene() {
     camera.beta = Math.PI / 3.2;
     gameState = GAME_STATE.FLOOR_COMBAT;
     gameMode = MAP_STATE.FLOOR_COMBAT;
+    autosave("enter_first_floor");
   }
   window.startNewGame = startNewGame;
   window.openCharacterCreation = openCharacterCreation;
@@ -880,6 +1037,7 @@ function createScene() {
 
     progression.innerWorld.step = "reward";
     renderInnerWorld();
+    autosave("enter_inner_world");
   }
 
   function leaveInnerWorldToNextFloor() {
@@ -897,6 +1055,7 @@ function createScene() {
     gameState = GAME_STATE.FLOOR_COMBAT;
     camera.radius = 11;
     camera.beta = Math.PI / 3.2;
+    autosave("next_floor");
   }
 
   function renderStatPanel() {
@@ -924,6 +1083,7 @@ function createScene() {
         progression.growth.recalculate(progression.swordStage);
         battle.refreshDerivedStats();
         renderInnerWorld();
+        autosave("stat_allocate");
       });
       wrap.appendChild(btn);
       ui.statList.appendChild(wrap);
@@ -962,6 +1122,7 @@ function createScene() {
     }
     progression.growth.recalculate(progression.swordStage);
     battle.refreshDerivedStats();
+    autosave("reward_select");
   }
 
   function renderInnerWorld() {
@@ -1076,10 +1237,50 @@ function createScene() {
   ui.continueGameBtn.addEventListener("click", () => {
     const loaded = loadCharacter();
     if (!loaded) return;
-    applyCreatedCharacterToProgression(loaded);
-    enterFirstFloor();
+    if (!loaded.ok) {
+      window.alert("저장 데이터 버전이 맞지 않거나 손상되었습니다. 새 게임을 시작해주세요.");
+      return;
+    }
+    if (!restoreFromSaveRecord(loaded)) {
+      ui.titleScreen.classList.remove("hidden");
+    }
   });
   ui.continueGameBtn.disabled = !hasSavedCharacter();
+  ui.debugSaveBtn.addEventListener("click", () => autosave("debug_save"));
+  ui.debugLoadBtn.addEventListener("click", () => {
+    const loaded = loadCharacter();
+    if (loaded && loaded.ok) restoreFromSaveRecord(loaded);
+  });
+  ui.debugClearBtn.addEventListener("click", () => {
+    clearSave();
+    ui.continueGameBtn.disabled = true;
+  });
+  ui.debugCoinBtn.addEventListener("click", () => {
+    progression.coins += 10;
+    autosave("debug_coin");
+  });
+  ui.debugLevelBtn.addEventListener("click", () => {
+    progression.level += 5;
+    progression.growth.recalculate(progression.swordStage);
+    battle.refreshDerivedStats();
+    autosave("debug_level");
+  });
+  ui.debugInnerBtn.addEventListener("click", () => {
+    if (gameMode === MAP_STATE.FLOOR_COMBAT) {
+      progression.currentEnemyData = battle.getEnemyDescriptor();
+      enterInnerWorld();
+    }
+  });
+  ui.debugNextFloorBtn.addEventListener("click", () => {
+    if (gameMode === MAP_STATE.INNER_WORLD) {
+      progression.innerWorld.step = "next";
+      leaveInnerWorldToNextFloor();
+    } else if (gameMode === MAP_STATE.FLOOR_COMBAT) {
+      progression.floor += 1;
+      battle.setupForFloor(progression.floor);
+      autosave("debug_next_floor");
+    }
+  });
 
   ui.ccBackBtn.addEventListener("click", () => {
     if (characterForm.stepIndex <= 0) return;
@@ -1155,8 +1356,7 @@ function createScene() {
     }
     const created = createPlayerFromCharacterForm(characterForm);
     applyCreatedCharacterToProgression(created);
-    saveCharacter(created);
-    ui.continueGameBtn.disabled = !hasSavedCharacter();
+    autosave("character_creation_complete");
     enterFirstFloor();
   });
 
@@ -1165,6 +1365,7 @@ function createScene() {
     progression.coins -= 1;
     progression.currentRewards = rerollRewards(progression.currentEnemyData);
     renderInnerWorld();
+    autosave("reward_reroll");
   });
 
   ui.statDoneBtn.addEventListener("click", () => {
@@ -1172,6 +1373,7 @@ function createScene() {
     progression.innerWorld.statsDone = true;
     progression.innerWorld.step = getPendingSkillSlot(progression) ? "skillCreate" : "skill";
     renderInnerWorld();
+    autosave("stat_phase_done");
   });
 
   ui.autoSkillNameBtn.addEventListener("click", () => {
@@ -1200,22 +1402,28 @@ function createScene() {
       }
     }
     renderInnerWorld();
+    if (result.ok) autosave("skill_create");
   });
 
   ui.useExternalBtn.addEventListener("click", () => {
-    useMartialManual(progression, progression.inventory, "external");
+    const ok = useMartialManual(progression, progression.inventory, "external");
+    if (ok) progression.manualUseCounts.external += 1;
     battle.refreshDerivedStats();
     renderInnerWorld();
+    if (ok) autosave("manual_external_use");
   });
   ui.useInternalBtn.addEventListener("click", () => {
-    useMartialManual(progression, progression.inventory, "internal");
+    const ok = useMartialManual(progression, progression.inventory, "internal");
+    if (ok) progression.manualUseCounts.internal += 1;
     battle.refreshDerivedStats();
     renderInnerWorld();
+    if (ok) autosave("manual_internal_use");
   });
   ui.useSwordBtn.addEventListener("click", () => {
-    useMartialManual(progression, progression.inventory, "sword");
+    const ok = useMartialManual(progression, progression.inventory, "sword");
     battle.refreshDerivedStats();
     renderInnerWorld();
+    if (ok) autosave("manual_sword_use");
   });
 
   ui.manualDoneBtn.addEventListener("click", () => {
@@ -1230,6 +1438,7 @@ function createScene() {
     ui.learnResult.textContent = result.ok ? `성공: ${result.spellName || "효과 적용"}` : "실패";
     refreshMagicSelect();
     renderInnerWorld();
+    autosave("spellbook_use");
   });
 
   ui.extraLearnBtn.addEventListener("click", () => {
@@ -1240,6 +1449,7 @@ function createScene() {
     ui.learnResult.textContent = result.ok ? `성공: ${result.spellName || "효과 적용"}` : "실패";
     refreshMagicSelect();
     renderInnerWorld();
+    autosave("spellbook_extra_use");
   });
 
   ui.spellBookDoneBtn.addEventListener("click", () => {
@@ -1251,14 +1461,14 @@ function createScene() {
   function shopCtx() {
     return { canTrade: progression.innerWorld.step === "shop", progression, inventory: progression.inventory };
   }
-  ui.buyExternalBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_external"); renderInnerWorld(); });
-  ui.buyInternalBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_internal"); renderInnerWorld(); });
-  ui.buySwordBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_sword"); renderInnerWorld(); });
-  ui.buyTicketBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_ticket"); renderInnerWorld(); });
-  ui.buySkillResetBtn.addEventListener("click", () => { buyShopItem(shopCtx(), "buy_skill_reset"); renderInnerWorld(); });
-  ui.sellExternalBtn.addEventListener("click", () => { sellShopItem(shopCtx(), "sell_external"); renderInnerWorld(); });
-  ui.sellInternalBtn.addEventListener("click", () => { sellShopItem(shopCtx(), "sell_internal"); renderInnerWorld(); });
-  ui.sellSwordBtn.addEventListener("click", () => { sellShopItem(shopCtx(), "sell_sword"); renderInnerWorld(); });
+  ui.buyExternalBtn.addEventListener("click", () => { if (buyShopItem(shopCtx(), "buy_external")) autosave("shop_buy_external"); renderInnerWorld(); });
+  ui.buyInternalBtn.addEventListener("click", () => { if (buyShopItem(shopCtx(), "buy_internal")) autosave("shop_buy_internal"); renderInnerWorld(); });
+  ui.buySwordBtn.addEventListener("click", () => { if (buyShopItem(shopCtx(), "buy_sword")) autosave("shop_buy_sword"); renderInnerWorld(); });
+  ui.buyTicketBtn.addEventListener("click", () => { if (buyShopItem(shopCtx(), "buy_ticket")) autosave("shop_buy_ticket"); renderInnerWorld(); });
+  ui.buySkillResetBtn.addEventListener("click", () => { if (buyShopItem(shopCtx(), "buy_skill_reset")) autosave("shop_buy_reset"); renderInnerWorld(); });
+  ui.sellExternalBtn.addEventListener("click", () => { if (sellShopItem(shopCtx(), "sell_external")) autosave("shop_sell_external"); renderInnerWorld(); });
+  ui.sellInternalBtn.addEventListener("click", () => { if (sellShopItem(shopCtx(), "sell_internal")) autosave("shop_sell_internal"); renderInnerWorld(); });
+  ui.sellSwordBtn.addEventListener("click", () => { if (sellShopItem(shopCtx(), "sell_sword")) autosave("shop_sell_sword"); renderInnerWorld(); });
   ui.drawTicketBtn.addEventListener("click", () => {
     const result = drawMartialManualTicket(shopCtx());
     if (!result) return;
@@ -1266,6 +1476,7 @@ function createScene() {
     if (result.manualType === "internal") progression.inventory.internalManualCount += 1;
     if (result.manualType === "sword") progression.inventory.swordEnergyCount += 1;
     renderInnerWorld();
+    autosave("manual_ticket_draw");
   });
   ui.shopDoneBtn.addEventListener("click", () => {
     if (progression.innerWorld.step !== "shop") return;
@@ -1370,6 +1581,7 @@ function createScene() {
     if (gameMode === MAP_STATE.FLOOR_COMBAT && battle.getPhase() === "clear") {
       hud.battleMessage.textContent = "층 클리어";
       if (!progression.innerWorld.active) {
+        autosave("floor_clear");
         progression.currentEnemyData = battle.getEnemyDescriptor();
         enterInnerWorld();
       }
@@ -1377,6 +1589,7 @@ function createScene() {
       hud.battleMessage.textContent = "패배";
       input.setEnabled(false);
       gameState = GAME_STATE.GAME_OVER;
+      autosave("player_dead");
     } else {
       hud.battleMessage.textContent = "";
     }
