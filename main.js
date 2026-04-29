@@ -55,6 +55,7 @@ function createProgressionState() {
     growth,
     inventory: createInventoryState(),
     currentRewards: [],
+    rewardDrawTicketCount: 0,
     currentEnemyData: { skills: [] },
     innerWorld: createInnerWorldState(),
     skills: createSkillState(),
@@ -632,6 +633,8 @@ function createScene() {
   const input = createInputController(scene);
   const battle = createBattleSystem(scene, player, progression);
   mapManager.clearCurrentMap();
+  const innerInteractables = [];
+  let activeInnerPanel = null;
 
   const hud = {
     floorInfo: document.getElementById("floorInfo"),
@@ -801,6 +804,8 @@ function createScene() {
           ...snapshot,
           currentEnemyData: { ...progression.currentEnemyData },
         },
+        rewardDrawTicketCount: progression.rewardDrawTicketCount || 0,
+        activeInnerPanel: activeInnerPanel || null,
       },
     };
   }
@@ -834,6 +839,8 @@ function createScene() {
     progression.equippedMagicId = p.equippedMagicId || null;
     progression.innerWorld = { ...progression.innerWorld, ...(p.innerWorld || {}) };
     progression.currentEnemyData = { ...(p.floorState?.currentEnemyData || progression.currentEnemyData) };
+    progression.rewardDrawTicketCount = p.rewardDrawTicketCount || 0;
+    activeInnerPanel = p.activeInnerPanel || null;
     progression.growth.state.baseStats = { ...progression.growth.state.baseStats, ...(p.growth?.baseStats || {}) };
     progression.growth.recalculate(progression.swordStage, progression.level, progression.manualUseCounts, progression.multiCastingCount);
     progression.growth.state.officialDerivedStats = { ...(p.growth?.officialDerivedStats || {}) };
@@ -864,11 +871,13 @@ function createScene() {
     if (gameState === GAME_STATE.INNER_WORLD) {
       ui.titleScreen.classList.add("hidden");
       ui.characterCreation.classList.add("hidden");
-      applyGameplayVisibility(false);
-      input.setEnabled(false);
+      applyGameplayVisibility(true);
+      input.setEnabled(true);
       ui.inner.classList.remove("hidden");
       mapManager.showInnerWorldMap({ floor: progression.floor, level: progression.level });
+      spawnInnerWorldInteractables();
       battle.despawnEnemy();
+      player.position.set(0, 1, 0);
       gameMode = MAP_STATE.INNER_WORLD;
       renderInnerWorld();
       return true;
@@ -1011,6 +1020,50 @@ function createScene() {
   window.openCharacterCreation = openCharacterCreation;
   window.enterFirstFloor = enterFirstFloor;
 
+  function clearInnerInteractables() {
+    innerInteractables.forEach((x) => x.mesh?.dispose());
+    innerInteractables.length = 0;
+  }
+  function spawnInnerWorldInteractables() {
+    clearInnerInteractables();
+    const defs = [
+      { id: "reward", label: "보상 뽑기 장치", pos: new BABYLON.Vector3(-3, 1, 0), color: new BABYLON.Color3(0.2, 0.8, 1) },
+      { id: "storage", label: "저장고", pos: new BABYLON.Vector3(3, 1, 0), color: new BABYLON.Color3(0.4, 1, 0.5) },
+      { id: "shop", label: "상점", pos: new BABYLON.Vector3(0, 1, -3), color: new BABYLON.Color3(1, 0.8, 0.3) },
+      { id: "training", label: "연습실", pos: new BABYLON.Vector3(0, 1, 3), color: new BABYLON.Color3(0.9, 0.4, 1) },
+      { id: "statue", label: `${progression.mantra || "만트라"} 석상`, pos: new BABYLON.Vector3(0, 1, 0.8), color: new BABYLON.Color3(1, 1, 1) },
+      { id: "gate", label: "다음 층 게이트", pos: new BABYLON.Vector3(0, 1, -5), color: new BABYLON.Color3(1, 0.5, 0.5) },
+    ];
+    defs.forEach((d) => {
+      const m = BABYLON.MeshBuilder.CreateCylinder(`iw_${d.id}`, { height: 1.8, diameter: 0.9 }, scene);
+      m.position.copyFrom(d.pos);
+      const mat = new BABYLON.StandardMaterial(`iwm_${d.id}`, scene);
+      mat.emissiveColor = d.color;
+      m.material = mat;
+      innerInteractables.push({ ...d, mesh: m });
+    });
+  }
+  function openInnerPanel(id) {
+    activeInnerPanel = id;
+    progression.innerWorld.step = id === "reward" ? "reward"
+      : id === "storage" ? "skill"
+      : id === "shop" ? "shop"
+      : id === "statue" ? (getPendingSkillSlot(progression) ? "skillCreate" : "stats")
+      : id === "gate" ? "next"
+      : "none";
+    if (id === "training") {
+      ui.learnResult.textContent = "연습실: 기본 공격/마법/스킬 테스트 가능 (진행 영향 없음)";
+      progression.innerWorld.step = "spellBook";
+    }
+    renderInnerWorld();
+  }
+  function tryInteractWithInnerWorldObject() {
+    const hit = innerInteractables.find((obj) => BABYLON.Vector3.Distance(player.position, obj.mesh.position) <= 2.1);
+    if (!hit) return false;
+    openInnerPanel(hit.id);
+    return true;
+  }
+
   function enterInnerWorld() {
     if (progression.innerWorld.rewardGranted) return;
     progression.innerWorld.rewardGranted = true;
@@ -1024,11 +1077,12 @@ function createScene() {
     progression.level += 5;
     progression.statPoints += 15;
     progression.coins += 1;
-    progression.currentRewards = generateRewardChoices(progression.currentEnemyData);
+    progression.rewardDrawTicketCount += 1;
+    progression.currentRewards = [];
     battle.despawnEnemy();
 
-    input.setEnabled(false);
-    applyGameplayVisibility(false);
+    input.setEnabled(true);
+    applyGameplayVisibility(true);
     ui.inner.classList.remove("hidden");
     gameMode = MAP_STATE.INNER_WORLD;
     gameState = GAME_STATE.INNER_WORLD;
@@ -1036,12 +1090,15 @@ function createScene() {
     camera.radius = 16;
     camera.beta = Math.PI / 2.8;
 
-    progression.innerWorld.step = "reward";
+    progression.innerWorld.step = "none";
+    spawnInnerWorldInteractables();
     renderInnerWorld();
+    ui.innerStepText.textContent = "층 클리어: 레벨 +5 / 스탯 +15 / 코인 +1 / 보상 뽑기권 +1";
     autosave("enter_inner_world");
   }
 
   function leaveInnerWorldToNextFloor() {
+    clearInnerInteractables();
     progression.floor += 1;
     progression.innerWorld.active = false;
     progression.innerWorld.step = "none";
@@ -1095,6 +1152,15 @@ function createScene() {
 
   function renderRewardPanel() {
     ui.rewardChoices.innerHTML = "";
+    if (!progression.currentRewards.length) {
+      const info = document.createElement("div");
+      info.textContent = `보상 뽑기권: ${progression.rewardDrawTicketCount}`;
+      ui.rewardChoices.appendChild(info);
+      ui.rerollBtn.textContent = "뽑기권 사용";
+      ui.rerollBtn.disabled = progression.rewardDrawTicketCount <= 0;
+      return;
+    }
+
     progression.currentRewards.forEach((reward) => {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -1103,11 +1169,13 @@ function createScene() {
       btn.addEventListener("click", () => {
         selectReward(reward);
         progression.innerWorld.rewardChosen = true;
-        progression.innerWorld.step = "stats";
+        progression.currentRewards = [];
+        progression.innerWorld.step = "none";
         renderInnerWorld();
       });
       ui.rewardChoices.appendChild(btn);
     });
+    ui.rerollBtn.textContent = "리롤(코인 1)";
     ui.rerollBtn.disabled = progression.coins <= 0 || progression.innerWorld.rewardChosen;
   }
 
@@ -1133,7 +1201,7 @@ function createScene() {
     const step = progression.innerWorld.step;
     ui.innerStepText.textContent =
       step === "reward"
-        ? "순서 1/6: 보상 선택"
+        ? `보상 뽑기 장치 (티켓 ${progression.rewardDrawTicketCount})`
         : step === "stats"
           ? "순서 2/6: 스탯 투자"
           : step === "skillCreate"
@@ -1146,7 +1214,7 @@ function createScene() {
                   ? "순서 5/6: 상점"
           : step === "next"
             ? "순서 6/6: 다음 층 진입"
-            : "회복";
+            : "심상세계 탐색: 오브젝트 근처에서 기본 공격으로 상호작용";
 
     ui.rewardPanel.classList.toggle("hidden", step !== "reward");
     ui.statPanel.classList.toggle("hidden", step !== "stats");
@@ -1364,7 +1432,17 @@ function createScene() {
   });
 
   ui.rerollBtn.addEventListener("click", () => {
-    if (progression.coins <= 0 || progression.innerWorld.step !== "reward") return;
+    if (progression.innerWorld.step !== "reward") return;
+    if (!progression.currentRewards.length) {
+      if (progression.rewardDrawTicketCount <= 0) return;
+      progression.rewardDrawTicketCount -= 1;
+      progression.innerWorld.rewardChosen = false;
+      progression.currentRewards = generateRewardChoices(progression.currentEnemyData);
+      renderInnerWorld();
+      autosave("reward_draw_ticket_use");
+      return;
+    }
+    if (progression.coins <= 0) return;
     progression.coins -= 1;
     progression.currentRewards = rerollRewards(progression.currentEnemyData);
     renderInnerWorld();
@@ -1529,6 +1607,9 @@ function createScene() {
     const actions = input.consumeActions();
     if (actions.lockToggle && gameMode === MAP_STATE.FLOOR_COMBAT) {
       battle.toggleLockOn();
+    }
+    if (gameMode === MAP_STATE.INNER_WORLD && actions.attackPressed) {
+      tryInteractWithInnerWorldObject();
     }
     if (gameMode === MAP_STATE.FLOOR_COMBAT) {
       battle.update(dt, moveDir, actions);
