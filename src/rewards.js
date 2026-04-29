@@ -8,35 +8,22 @@
 
   function generateReward() {
     const roll = Math.random();
-
-    if (roll < 0.05) {
-      return { type: "skillResetTicket", name: "스킬 초기화권", desc: "스킬 초기화권 +1", payload: { amount: 1 } };
-    }
-
     if (roll < 0.15) {
       const m = generateMartialManual();
       return { type: "martialManual", name: m.name, desc: m.desc, payload: m };
     }
-
-    if (roll < 0.4) {
+    if (roll < 0.30) {
       const grade = global.rollSpellBookGrade();
       return { type: "spellBook", name: "마법서", desc: `${grade} 마법서 획득`, payload: { grade } };
     }
-
-    if (roll < 0.8) {
+    if (roll < 0.70) {
       return { type: "coin", name: "추가 코인", desc: "코인 +1", payload: { amount: 1 } };
     }
-
     return { type: "coin", name: "추가 코인", desc: "코인 +2", payload: { amount: 2 } };
   }
 
-  function generateRewardChoices() {
-    return [generateReward(), generateReward()];
-  }
-
-  function rerollRewards() {
-    return generateRewardChoices();
-  }
+  function generateRewardChoices() { return [generateReward(), generateReward()]; }
+  function rerollRewards() { return generateRewardChoices(); }
 
   global.generateMartialManual = generateMartialManual;
   global.generateReward = generateReward;

@@ -61,10 +61,10 @@
     const baseStats = {
       strength: 1 + form.statAllocation.strength,
       agility: 1 + form.statAllocation.agility,
+      appearance: 1 + form.statAllocation.appearance,
       vitality: 1 + form.statAllocation.vitality,
       intelligence: 1 + form.statAllocation.intelligence,
       wisdom: 1 + form.statAllocation.wisdom,
-      luck: 1 + form.statAllocation.appearance,
     };
     const officialPrimary = {
       strength: baseStats.strength,

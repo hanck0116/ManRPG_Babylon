@@ -2,12 +2,12 @@ const canvas = document.getElementById("gameCanvas");
 const engine = new BABYLON.Engine(canvas, true);
 
 const BASE_STATS = {
-  strength: 10,
-  agility: 10,
-  vitality: 10,
-  intelligence: 10,
-  wisdom: 10,
-  luck: 10,
+  strength: 1,
+  agility: 1,
+  appearance: 1,
+  vitality: 1,
+  intelligence: 1,
+  wisdom: 1,
 };
 
 const COMBAT_STATE = {
@@ -267,7 +267,7 @@ function getFacing(mesh) {
 function createBattleSystem(scene, player, progression) {
   const playerState = {
     hp: 100, maxHp: 100, mp: 100, maxMp: 100, mpRegen: 1,
-    moveSpeed: 4.5, attackDamage: 20, critChance: 0.05,
+    moveSpeed: 4.5, attackDamage: 20, critChance: 0,
     dodgeSpeed: 11, dodgeDuration: 0.22, dodgeDistance: 2.6,
     dodgeTimer: 0, dodging: false, invincible: false, guardHeld: false,
     attackTimer: 0, attackCooldown: 0, dodgeCooldown: 0, magicCooldown: 0,
@@ -298,13 +298,13 @@ function createBattleSystem(scene, player, progression) {
     target.position.addInPlace(d.scale(dist)); clampInsideArena(target.position);
   }
   function recomputePlayerFromStats() {
-    const d = progression.growth.recalculate(progression.swordStage);
+    const d = progression.growth.recalculate(progression.swordStage, progression.level, progression.manualUseCounts, progression.multiCastingCount);
     playerState.maxHp = d.maxHp;
     playerState.maxMp = d.maxMp;
     playerState.mpRegen = d.mpRegen;
     playerState.moveSpeed = d.moveSpeed;
     playerState.attackDamage = d.attackDamage;
-    playerState.critChance = d.critChance;
+    playerState.critChance = 0;
     playerState.dodgeDistance = d.dodgeDistance;
     playerState.dodgeSpeed = playerState.dodgeDistance / playerState.dodgeDuration;
     playerState.hp = Math.min(playerState.hp, playerState.maxHp);
@@ -360,7 +360,7 @@ function createBattleSystem(scene, player, progression) {
     if (playerState.mp < spell.mpCost) { playerState.feedback = "MP 부족"; playerState.feedbackTimer = 0.2; return { casted: false }; }
     playerState.mp -= spell.mpCost; playerState.feedback = "마법"; playerState.feedbackTimer = 0.2;
     const forward = getFacing(player);
-    const magicBase = (spell.damage || 0) + (progression.growth.state.derivedStats.magicDamage || 0) + progression.growth.state.baseStats.intelligence * 2;
+    const magicBase = spell.damage || 0;
 
     if (spell.type === "heal") {
       playerState.hp = Math.min(playerState.maxHp, playerState.hp + 120);
@@ -506,7 +506,7 @@ function createBattleSystem(scene, player, progression) {
         playerState.attackTimer -= delta;
         if (!playerState.attackHitDone && enemy) {
           const toEnemy = enemy.position.subtract(player.position); toEnemy.y = 0;
-          if (toEnemy.length() <= 1.85) { toEnemy.normalize(); if (BABYLON.Vector3.Dot(getFacing(player), toEnemy) > 0.2) { const crit = Math.random() < playerState.critChance ? 1.5 : 1; dealDamageToEnemy(playerState.attackDamage * crit); playerState.attackHitDone = true; } }
+          if (toEnemy.length() <= 1.85) { toEnemy.normalize(); if (BABYLON.Vector3.Dot(getFacing(player), toEnemy) > 0.2) { dealDamageToEnemy(playerState.attackDamage); playerState.attackHitDone = true; } }
         }
       }
       if (playerState.dodging) {
@@ -739,6 +739,7 @@ function createScene() {
   const actionButtonsWrap = document.getElementById("actionButtons");
   const joystickWrap = document.getElementById("mobileJoystick");
   const characterForm = resetCharacterCreationForm();
+  ui.buyTicketBtn.textContent = `무공서 뽑기권 구매(${MANUAL_TICKET_PRICE}코인)`;
   setSkillPlayerContext(progression);
   SKILL_TYPES.forEach((type) => {
     const op = document.createElement("option");
@@ -834,7 +835,7 @@ function createScene() {
     progression.innerWorld = { ...progression.innerWorld, ...(p.innerWorld || {}) };
     progression.currentEnemyData = { ...(p.floorState?.currentEnemyData || progression.currentEnemyData) };
     progression.growth.state.baseStats = { ...progression.growth.state.baseStats, ...(p.growth?.baseStats || {}) };
-    progression.growth.recalculate(progression.swordStage);
+    progression.growth.recalculate(progression.swordStage, progression.level, progression.manualUseCounts, progression.multiCastingCount);
     progression.growth.state.officialDerivedStats = { ...(p.growth?.officialDerivedStats || {}) };
     setSkillPlayerContext(progression);
     battle.refreshDerivedStats();
@@ -986,7 +987,7 @@ function createScene() {
     setSkillPlayerContext(progression);
 
     progression.growth.state.baseStats = { ...created.baseStats };
-    progression.growth.recalculate(0);
+    progression.growth.recalculate(0, progression.level, progression.manualUseCounts, progression.multiCastingCount);
     progression.growth.state.officialDerivedStats = { ...created.officialDerivedStats };
     progression.hp = created.hp;
     progression.mp = created.mp;
@@ -1063,10 +1064,10 @@ function createScene() {
     const labels = {
       strength: "힘",
       agility: "민첩",
+      appearance: "외모(운)",
       vitality: "체력",
       intelligence: "지능",
       wisdom: "지혜",
-      luck: "외모(운)",
     };
 
     Object.keys(labels).forEach((key) => {
@@ -1078,9 +1079,11 @@ function createScene() {
       btn.disabled = progression.statPoints <= 0;
       btn.addEventListener("click", () => {
         if (progression.statPoints <= 0) return;
+        const cap = getStatCap(progression.level);
+        if ((progression.growth.state.baseStats[key] || 0) >= cap) return;
         progression.growth.state.baseStats[key] += 1;
         progression.statPoints -= 1;
-        progression.growth.recalculate(progression.swordStage);
+        progression.growth.recalculate(progression.swordStage, progression.level, progression.manualUseCounts, progression.multiCastingCount);
         battle.refreshDerivedStats();
         renderInnerWorld();
         autosave("stat_allocate");
@@ -1120,7 +1123,7 @@ function createScene() {
     } else if (reward.type === "coin") {
       progression.coins += reward.payload.amount;
     }
-    progression.growth.recalculate(progression.swordStage);
+    progression.growth.recalculate(progression.swordStage, progression.level, progression.manualUseCounts, progression.multiCastingCount);
     battle.refreshDerivedStats();
     autosave("reward_select");
   }
@@ -1261,7 +1264,7 @@ function createScene() {
   });
   ui.debugLevelBtn.addEventListener("click", () => {
     progression.level += 5;
-    progression.growth.recalculate(progression.swordStage);
+    progression.growth.recalculate(progression.swordStage, progression.level, progression.manualUseCounts, progression.multiCastingCount);
     battle.refreshDerivedStats();
     autosave("debug_level");
   });
@@ -1407,14 +1410,12 @@ function createScene() {
 
   ui.useExternalBtn.addEventListener("click", () => {
     const ok = useMartialManual(progression, progression.inventory, "external");
-    if (ok) progression.manualUseCounts.external += 1;
     battle.refreshDerivedStats();
     renderInnerWorld();
     if (ok) autosave("manual_external_use");
   });
   ui.useInternalBtn.addEventListener("click", () => {
     const ok = useMartialManual(progression, progression.inventory, "internal");
-    if (ok) progression.manualUseCounts.internal += 1;
     battle.refreshDerivedStats();
     renderInnerWorld();
     if (ok) autosave("manual_internal_use");
