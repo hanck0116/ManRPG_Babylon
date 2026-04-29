@@ -635,6 +635,8 @@ function createScene() {
   mapManager.clearCurrentMap();
   const innerInteractables = [];
   let activeInnerPanel = null;
+  let trainingDummy = null;
+  const trainingState = { mode: "none", logs: [], dummyMode: "infinite" };
 
   const hud = {
     floorInfo: document.getElementById("floorInfo"),
@@ -1051,10 +1053,7 @@ function createScene() {
       : id === "statue" ? (getPendingSkillSlot(progression) ? "skillCreate" : "stats")
       : id === "gate" ? "next"
       : "none";
-    if (id === "training") {
-      ui.learnResult.textContent = "연습실: 기본 공격/마법/스킬 테스트 가능 (진행 영향 없음)";
-      progression.innerWorld.step = "spellBook";
-    }
+    if (id === "training") progression.innerWorld.step = "spellBook";
     renderInnerWorld();
   }
   function tryInteractWithInnerWorldObject() {
@@ -1062,6 +1061,49 @@ function createScene() {
     if (!hit) return false;
     openInnerPanel(hit.id);
     return true;
+  }
+
+  function recordTrainingDamage(amount, source = "basic") {
+    trainingState.logs.unshift(`${source}: ${Math.floor(amount)}`);
+    trainingState.logs = trainingState.logs.slice(0, 5);
+  }
+  function removeTrainingDummy() {
+    if (trainingDummy) trainingDummy.dispose();
+    trainingDummy = null;
+    trainingState.mode = "none";
+  }
+  function spawnTrainingDummy(mode = "infinite") {
+    removeTrainingDummy();
+    const d = BABYLON.MeshBuilder.CreateCapsule("trainingDummy", { height: 2, radius: 0.45 }, scene);
+    d.position = new BABYLON.Vector3(0, 1, 4.2);
+    d.metadata = { type: "trainingDummy", hp: 500, maxHp: 500, mode, respawnAt: 0, attackCd: 0 };
+    const m = new BABYLON.StandardMaterial("trainingDummyMat", scene);
+    m.emissiveColor = new BABYLON.Color3(0.9, 0.2, 0.8);
+    d.material = m;
+    trainingDummy = d;
+    trainingState.mode = mode;
+  }
+  function applyDamageToTrainingDummy(amount, source = "basic") {
+    if (!trainingDummy || !trainingDummy.metadata) return false;
+    const meta = trainingDummy.metadata;
+    if (meta.mode === "infinite") {
+      recordTrainingDamage(amount, source);
+      return true;
+    }
+    meta.hp = Math.max(0, meta.hp - amount);
+    recordTrainingDamage(amount, source);
+    if (meta.hp <= 0 && meta.mode === "respawn") {
+      meta.respawnAt = performance.now() + 2000;
+      trainingDummy.setEnabled(false);
+    }
+    return true;
+  }
+  function canEnterNextFloor() {
+    const reasons = [];
+    if (gameState !== GAME_STATE.INNER_WORLD) reasons.push("심상세계 상태가 아닙니다.");
+    if (getPendingSkillSlot(progression)) reasons.push("석상에서 필수 스킬 생성을 완료해야 합니다.");
+    if (progression.currentRewards.length && !progression.innerWorld.rewardChosen) reasons.push("보상 선택이 아직 완료되지 않았습니다.");
+    return { ok: reasons.length === 0, reasons };
   }
 
   function enterInnerWorld() {
@@ -1099,6 +1141,7 @@ function createScene() {
 
   function leaveInnerWorldToNextFloor() {
     clearInnerInteractables();
+    removeTrainingDummy();
     progression.floor += 1;
     progression.innerWorld.active = false;
     progression.innerWorld.step = "none";
@@ -1236,15 +1279,30 @@ function createScene() {
       ui.manualCounts.textContent = `외공서 ${progression.inventory.externalManualCount} / 내공서 ${progression.inventory.internalManualCount} / 검기 ${progression.inventory.swordEnergyCount}`;
     }
     if (step === "spellBook") {
-      ui.spellBookList.textContent = progression.inventory.spellBooks.length
-        ? progression.inventory.spellBooks.map((b, i) => `${i + 1}. ${b.grade}${b.used ? "(사용됨)" : ""}`).join(" | ")
-        : "없음";
-      ui.learnedMagicList.textContent = progression.inventory.magicList.length
-        ? `습득 마법: ${progression.inventory.magicList.map((m) => m.name).join(", ")}`
-        : "습득 마법 없음";
+      if (activeInnerPanel === "training") {
+        ui.spellBookList.textContent = `연습 모드: ${trainingState.mode}`;
+        ui.learnedMagicList.textContent = `최근 피해 로그: ${trainingState.logs.join(" | ") || "없음"}`;
+        ui.learnSpellBtn.textContent = "무한 더미 생성";
+        ui.extraLearnBtn.textContent = "리스폰 더미 생성";
+        ui.spellBookDoneBtn.textContent = "훈련 종료";
+      } else {
+        ui.learnSpellBtn.textContent = "마법서 습득 시도";
+        ui.extraLearnBtn.textContent = "추가 시도(코인1)";
+        ui.spellBookDoneBtn.textContent = "마법서 단계 완료";
+        ui.spellBookList.textContent = progression.inventory.spellBooks.length
+          ? progression.inventory.spellBooks.map((b, i) => `${i + 1}. ${b.grade}${b.used ? "(사용됨)" : ""}`).join(" | ")
+          : "없음";
+        ui.learnedMagicList.textContent = progression.inventory.magicList.length
+          ? `습득 마법: ${progression.inventory.magicList.map((m) => m.name).join(", ")}`
+          : "습득 마법 없음";
+      }
     }
     if (step === "next") {
-      ui.nextFloorBtn.disabled = !!pendingSkillSlot;
+      const gateCheck = canEnterNextFloor();
+      ui.nextFloorBtn.disabled = !gateCheck.ok;
+      ui.learnResult.textContent = gateCheck.ok
+        ? `권장: 스탯포인트 ${progression.statPoints}, 보상뽑기권 ${progression.rewardDrawTicketCount}`
+        : gateCheck.reasons.join(" / ");
     }
   }
 
@@ -1513,6 +1571,12 @@ function createScene() {
 
   ui.learnSpellBtn.addEventListener("click", () => {
     if (progression.innerWorld.step !== "spellBook") return;
+    if (activeInnerPanel === "training") {
+      spawnTrainingDummy("infinite");
+      ui.learnResult.textContent = "무한 더미 생성 완료";
+      renderInnerWorld();
+      return;
+    }
     const result = attemptLearnSpellBook(progression, progression.inventory, false);
     ui.learnResult.textContent = result.ok ? `성공: ${result.spellName || "효과 적용"}` : "실패";
     refreshMagicSelect();
@@ -1522,6 +1586,12 @@ function createScene() {
 
   ui.extraLearnBtn.addEventListener("click", () => {
     if (progression.innerWorld.step !== "spellBook") return;
+    if (activeInnerPanel === "training") {
+      spawnTrainingDummy("respawn");
+      ui.learnResult.textContent = "리스폰 더미 생성 완료";
+      renderInnerWorld();
+      return;
+    }
     if (progression.coins <= 0) return;
     progression.coins -= 1;
     const result = attemptLearnSpellBook(progression, progression.inventory, true);
@@ -1533,6 +1603,13 @@ function createScene() {
 
   ui.spellBookDoneBtn.addEventListener("click", () => {
     if (progression.innerWorld.step !== "spellBook") return;
+    if (activeInnerPanel === "training") {
+      removeTrainingDummy();
+      activeInnerPanel = null;
+      progression.innerWorld.step = "none";
+      renderInnerWorld();
+      return;
+    }
     progression.innerWorld.step = "shop";
     renderInnerWorld();
   });
@@ -1565,7 +1642,7 @@ function createScene() {
 
   ui.nextFloorBtn.addEventListener("click", () => {
     if (progression.innerWorld.step !== "next") return;
-    if (getPendingSkillSlot(progression)) return;
+    if (!canEnterNextFloor().ok) return;
     leaveInnerWorldToNextFloor();
   });
 
@@ -1609,7 +1686,10 @@ function createScene() {
       battle.toggleLockOn();
     }
     if (gameMode === MAP_STATE.INNER_WORLD && actions.attackPressed) {
-      tryInteractWithInnerWorldObject();
+      const opened = tryInteractWithInnerWorldObject();
+      if (!opened && trainingDummy && BABYLON.Vector3.Distance(player.position, trainingDummy.position) <= 2.2) {
+        applyDamageToTrainingDummy(progression.growth.state.officialDerivedStats?.basicAttackDamage || 1, "basic");
+      }
     }
     if (gameMode === MAP_STATE.FLOOR_COMBAT) {
       battle.update(dt, moveDir, actions);
