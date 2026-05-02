@@ -1,9 +1,57 @@
-html, body {
+html,
+body {
   width: 100%;
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: #111;
+  background: #08090d;
+  color: #f8fafc;
+  font-family: Arial, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  min-height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(23, 32, 46, 0.92);
+  color: #f8fafc;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled),
+button.is-active {
+  background: rgba(42, 72, 112, 0.95);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  min-height: 38px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(5, 8, 15, 0.72);
+  color: #f8fafc;
+  padding: 8px 10px;
+}
+
+textarea {
+  min-height: 68px;
+  resize: vertical;
 }
 
 #gameCanvas {
@@ -13,13 +61,77 @@ html, body {
   touch-action: none;
 }
 
+.hidden {
+  display: none !important;
+}
+
+.hud {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 20;
+  min-width: 260px;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(5, 8, 15, 0.72);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+  font-size: 14px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.hud-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 700;
+}
+
+#battleMessage {
+  margin-top: 8px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+#actionFeedback {
+  min-height: 20px;
+  color: #7dd3fc;
+  font-weight: 700;
+}
+
+.interaction-hint,
+.toast {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 25;
+  width: min(560px, calc(100vw - 32px));
+  box-sizing: border-box;
+  text-align: center;
+  border-radius: 8px;
+  background: rgba(5, 8, 15, 0.78);
+  padding: 10px 14px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.26);
+}
+
+.interaction-hint {
+  bottom: 148px;
+}
+
+.toast {
+  top: 18%;
+  font-weight: 700;
+  white-space: pre-line;
+}
+
 #mobileJoystick {
   position: fixed;
   left: 20px;
   bottom: 20px;
   width: 120px;
   height: 120px;
-  z-index: 10;
+  z-index: 15;
   touch-action: none;
   user-select: none;
 }
@@ -28,121 +140,207 @@ html, body {
   position: relative;
   width: 100%;
   height: 100%;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.14);
   border: 2px solid rgba(255, 255, 255, 0.28);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
   box-sizing: border-box;
 }
 
 #joystickKnob {
   position: absolute;
-  width: 54px;
-  height: 54px;
   left: 50%;
   top: 50%;
+  width: 54px;
+  height: 54px;
   border-radius: 50%;
   transform: translate(-50%, -50%);
-  background: rgba(255, 255, 255, 0.7);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
-}
-
-#hud {
-  position: fixed;
-  top: 14px;
-  left: 14px;
-  right: 14px;
-  z-index: 20;
-  color: #fff;
-  font-family: Arial, sans-serif;
-  font-size: 16px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
-  pointer-events: none;
-}
-
-#battleMessage {
-  margin-top: 8px;
-  font-size: 22px;
-  font-weight: bold;
-}
-
-#actionFeedback {
-  margin-top: 6px;
-  font-size: 18px;
-  font-weight: bold;
-  color: #7dd3fc;
-}
-
-#floorInfo, #progressInfo {
-  font-weight: bold;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
 #actionButtons {
   position: fixed;
-  right: 20px;
-  bottom: 20px;
+  right: 18px;
+  bottom: 18px;
   z-index: 15;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  max-width: 210px;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, 72px);
+  gap: 10px;
 }
 
 #actionButtons button {
-  width: 88px;
-  height: 88px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.6);
-  background: rgba(20, 20, 20, 0.45);
-  color: #fff;
-  font-size: 18px;
-  font-weight: bold;
+  padding: 0;
+  font-weight: 700;
   touch-action: none;
+  background: rgba(17, 24, 39, 0.64);
 }
 
-#actionButtons button:active,
-#actionButtons button.is-active {
-  background: rgba(255, 120, 120, 0.65);
-}
-
-#actionButtons button:disabled {
-  opacity: 0.45;
-}
-
-#innerWorld {
+.screen-panel,
+.modal-layer {
   position: fixed;
   inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(3, 6, 12, 0.72);
+  overflow: auto;
+  padding: 22px;
+  box-sizing: border-box;
+}
+
+.modal-layer {
   z-index: 40;
-  background: rgba(4, 6, 12, 0.82);
-  color: #fff;
-  font-family: Arial, sans-serif;
+  background: rgba(3, 6, 12, 0.48);
+}
+
+.panel {
+  width: min(940px, 100%);
+  max-height: calc(100vh - 44px);
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(12, 17, 27, 0.96);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.34);
   padding: 20px;
+  box-sizing: border-box;
 }
 
-#innerWorld.hidden,
-.hidden {
-  display: none !important;
+.panel.compact {
+  width: min(720px, 100%);
 }
 
-#rewardChoices {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
+.panel h1,
+.panel h2,
+.panel h3 {
+  margin: 0 0 12px;
 }
 
-#rewardChoices button,
-#rerollBtn,
-#nextFloorBtn,
-#statList button {
-  min-height: 44px;
-  font-size: 15px;
-  padding: 8px 12px;
-  margin: 4px;
+.panel p {
+  margin: 8px 0;
+  color: #cbd5e1;
 }
 
-#statList {
-  display: flex;
-  flex-wrap: wrap;
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.form-row {
+  display: grid;
   gap: 6px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.muted {
+  color: #94a3b8;
+}
+
+.error {
+  color: #fca5a5;
+  font-weight: 700;
+}
+
+.success {
+  color: #86efac;
+  font-weight: 700;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stat-control {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(15, 23, 42, 0.64);
+}
+
+.stat-control .stat-actions {
+  display: grid;
+  grid-template-columns: 40px 1fr 40px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  text-align: center;
+}
+
+.card-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.choice-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(15, 23, 42, 0.68);
+}
+
+.inventory-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 720px) {
+  .screen-panel,
+  .modal-layer {
+    align-items: flex-start;
+    padding: 12px;
+  }
+
+  .panel {
+    max-height: none;
+    padding: 16px;
+  }
+
+  .grid,
+  .grid.three,
+  .stat-grid,
+  .card-list,
+  .inventory-list {
+    grid-template-columns: 1fr;
+  }
+
+  .hud {
+    font-size: 12px;
+    min-width: 0;
+  }
+
+  #mobileJoystick {
+    width: 104px;
+    height: 104px;
+  }
+
+  #actionButtons {
+    grid-template-columns: repeat(3, 58px);
+  }
+
+  #actionButtons button {
+    width: 58px;
+    height: 58px;
+    font-size: 13px;
+  }
 }

@@ -7,8 +7,10 @@
   function createMapManager(scene) {
     let state = MAP_STATE.FLOOR_COMBAT;
     let activeNodes = [];
+    let activeInteractables = [];
 
     function clearCurrentMap() {
+      activeInteractables = [];
       activeNodes.forEach((node) => {
         if (node && !node.isDisposed()) node.dispose();
       });
@@ -17,14 +19,15 @@
 
     function setMapFromFactory(factory, context) {
       clearCurrentMap();
-      const result = factory(scene, context);
+      const result = factory(scene, context) || {};
       activeNodes = result.nodes || [];
+      activeInteractables = result.interactables || [];
       return result;
     }
 
     function showFloorCombatMap(enemyDescriptor, context) {
       state = MAP_STATE.FLOOR_COMBAT;
-      const mapId = enemyDescriptor?.mapId || enemyDescriptor?.type || "defaultCylinderRoom";
+      const mapId = enemyDescriptor?.mapId || "defaultCylinderRoom";
       const mapFactory = global.FloorMaps[mapId] || global.FloorMaps.defaultCylinderRoom;
       return setMapFromFactory(mapFactory, context);
     }
@@ -36,7 +39,7 @@
 
     return {
       getState: () => state,
-      MAP_STATE,
+      getInteractables: () => activeInteractables,
       clearCurrentMap,
       showFloorCombatMap,
       showInnerWorldMap,

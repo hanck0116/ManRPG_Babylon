@@ -1,712 +1,291 @@
-const canvas = document.getElementById("gameCanvas");
+﻿const canvas = document.getElementById("gameCanvas");
 const engine = new BABYLON.Engine(canvas, true);
-
-const BASE_STATS = {
-  strength: 10,
-  agility: 10,
-  vitality: 10,
-  intelligence: 10,
-  wisdom: 10,
-  luck: 10,
+const Data = window.ManRPGData;
+const Save = window.ManRPGSave;
+const overlay = document.getElementById("appOverlay");
+const modalOverlay = document.getElementById("modalOverlay");
+const toast = document.getElementById("toast");
+const hint = document.getElementById("interactionHint");
+const hud = {
+  root: document.getElementById("hud"),
+  floorInfo: document.getElementById("floorInfo"),
+  modeInfo: document.getElementById("modeInfo"),
+  progressInfo: document.getElementById("progressInfo"),
+  playerHp: document.getElementById("playerHp"),
+  playerMp: document.getElementById("playerMp"),
+  enemyHp: document.getElementById("enemyHp"),
+  mantraInfo: document.getElementById("mantraInfo"),
+  spellInfo: document.getElementById("spellInfo"),
+  preparedInfo: document.getElementById("preparedInfo"),
+  battleMessage: document.getElementById("battleMessage"),
+  actionFeedback: document.getElementById("actionFeedback"),
 };
 
-const REWARD_POOL = [
-  { id: "maxHp", label: "최대 HP +20", apply: (s) => (s.bonus.maxHp += 20) },
-  { id: "attack", label: "공격력 +4", apply: (s) => (s.bonus.attack += 4) },
-  { id: "dodge", label: "회피 거리 +0.8", apply: (s) => (s.bonus.dodgeDistance += 0.8) },
-  { id: "guard", label: "가드 강화(+정면 판정)", apply: (s) => (s.bonus.guardAngle += 0.08) },
-  { id: "move", label: "이동속도 +0.5", apply: (s) => (s.bonus.moveSpeed += 0.5) },
-  { id: "crit", label: "치명타 확률 +5%", apply: (s) => (s.bonus.critChance += 0.05) },
-];
-const COMBAT_STATE = {
-  COMBAT_READY: "COMBAT_READY",
-  COMBAT_ACTIVE: "COMBAT_ACTIVE",
-  PLAYER_DEAD: "PLAYER_DEAD",
-  ENEMY_DEAD: "ENEMY_DEAD",
-  INNER_WORLD: "INNER_WORLD",
+let game = Data.createDefaultGameState();
+let scene, camera, playerRoot, input, mapManager, battle, playerMat;
+let currentMap = null;
+let trainingDummy = null;
+let nearestInnerObject = null;
+let toastTimer = 0;
+const draft = {
+  name: "",
+  gender: "",
+  mantra: Data.MANTRA_OPTIONS[0],
+  originalManaName: "",
+  originalManaType: "attribute",
+  originalManaDescription: "",
+  worldDestructionCause: "",
+  destroyer: "",
+  destroyerShape: "",
+  destroyerCombatStyle: "",
+  finalMoment: "",
+  goal: "",
+  strongestEmotion: "",
+  allocatedStats: Data.createEmptyStats(9),
 };
 
-function clamp01(v) {
-  return Math.max(0, Math.min(1, v));
+function esc(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
-function sampleRewards() {
-  const shuffled = [...REWARD_POOL].sort(() => Math.random() - 0.5);
-  return [shuffled[0], shuffled[1]];
+function saveNow() {
+  if (playerRoot) game.playerPosition = { x: playerRoot.position.x, y: playerRoot.position.y, z: playerRoot.position.z };
+  Save.save(game);
 }
 
-function createProgressionState() {
-  return {
-    floor: 1,
-    level: 1,
-    statPoints: 0,
-    coins: 0,
-    mantra: "화염",
-    spellSlots: {
-      equipped: "firebolt",
-      known: [
-        {
-          id: "firebolt",
-          name: "화염구",
-          mantra: "화염",
-          mpCost: 14,
-          damageScale: 1.25,
-          speed: 16,
-          radius: 0.18,
-          range: 14,
-        },
-      ],
-    },
-    stats: { ...BASE_STATS },
-    bonus: {
-      maxHp: 0,
-      attack: 0,
-      dodgeDistance: 0,
-      guardAngle: 0,
-      moveSpeed: 0,
-      critChance: 0,
-    },
-    currentRewards: [],
-    innerWorld: {
-      active: false,
-      step: "none", // recovery -> reward -> stats -> next
-      rewardChosen: false,
-      statsDone: false,
-    },
+function showToast(text, seconds = 2.2) {
+  toast.textContent = text;
+  toast.classList.remove("hidden");
+  toastTimer = seconds;
+}
+
+function setOverlay(visible) {
+  overlay.classList.toggle("hidden", !visible);
+}
+
+function setControls(visible) {
+  document.getElementById("mobileJoystick").classList.toggle("hidden", !visible);
+  document.getElementById("actionButtons").classList.toggle("hidden", !visible);
+  hud.root.classList.toggle("hidden", !visible);
+}
+
+function closeModal() {
+  modalOverlay.classList.add("hidden");
+  modalOverlay.innerHTML = "";
+  game.innerWorld.openedUI = null;
+  nearestInnerObject = null;
+  saveNow();
+}
+
+function showModal(title, body, afterRender) {
+  game.innerWorld.openedUI = title;
+  modalOverlay.classList.remove("hidden");
+  modalOverlay.innerHTML = `<div class="panel compact"><h2>${esc(title)}</h2>${body}<div class="toolbar"><button id="modalCloseBtn">닫기</button></div></div>`;
+  document.getElementById("modalCloseBtn").addEventListener("click", closeModal);
+  if (afterRender) afterRender();
+}
+
+function renderTitle() {
+  game.gameState = Data.GAME_STATES.TITLE;
+  game.currentMode = "title";
+  setControls(false);
+  setOverlay(true);
+  overlay.innerHTML = `<div class="panel compact">
+    <h1>ManRPG Babylon</h1>
+    <p>상실한 세계의 탑에서 너의 만트라와 마법을 다시 세운다.</p>
+    <div class="toolbar">
+      <button id="newGameBtn">새 게임</button>
+      <button id="loadGameBtn" ${Save.hasSave() ? "" : "disabled"}>이어하기</button>
+    </div>
+  </div>`;
+  document.getElementById("newGameBtn").onclick = () => {
+    Save.clear();
+    game = Data.createDefaultGameState();
+    renderCreation();
+  };
+  document.getElementById("loadGameBtn").onclick = () => {
+    const loaded = Save.load();
+    if (!loaded) return;
+    game = loaded;
+    restoreLoadedGame();
   };
 }
 
-function createInputController(scene) {
+function syncDraft() {
+  document.querySelectorAll("[data-draft]").forEach((el) => (draft[el.dataset.draft] = el.value));
+}
+
+function statTotal() {
+  return Data.STAT_KEYS.reduce((sum, key) => sum + draft.allocatedStats[key], 0);
+}
+
+function validateCreation() {
+  syncDraft();
+  const errors = [];
+  if (!draft.name.trim()) errors.push("이름을 입력해야 합니다.");
+  if (!draft.gender.trim()) errors.push("성별을 입력해야 합니다.");
+  if (statTotal() !== 54) errors.push("스탯 분배 합계는 정확히 54여야 합니다.");
+  if (!draft.originalManaName.trim() || !draft.originalManaDescription.trim()) errors.push("오리지널 마나 이름과 설명이 필요합니다.");
+  ["worldDestructionCause", "destroyer", "destroyerShape", "destroyerCombatStyle", "finalMoment", "goal", "strongestEmotion"].forEach((key) => {
+    if (!draft[key].trim()) errors.push(`${key} 항목이 비어 있습니다.`);
+  });
+  return [...new Set(errors)];
+}
+
+function renderCreation(errors = []) {
+  game.gameState = Data.GAME_STATES.CHARACTER_CREATION;
+  setControls(false);
+  setOverlay(true);
+  const total = statTotal();
+  const statHtml = Data.STAT_KEYS.map((key) => `
+    <div class="stat-control">
+      <strong>${Data.STAT_LABELS[key]}</strong>
+      <div class="muted">최종 ${draft.allocatedStats[key] + 1}</div>
+      <div class="stat-actions">
+        <button data-minus="${key}">-</button><span>${draft.allocatedStats[key]}</span><button data-plus="${key}" ${total >= 54 ? "disabled" : ""}>+</button>
+      </div>
+    </div>`).join("");
+  overlay.innerHTML = `<div class="panel">
+    <h1>캐릭터 생성</h1>
+    ${errors.length ? `<p class="error">${errors.map(esc).join("<br>")}</p>` : ""}
+    <div class="grid">
+      <label class="form-row">이름<input data-draft="name" value="${esc(draft.name)}"></label>
+      <label class="form-row">성별<input data-draft="gender" value="${esc(draft.gender)}"></label>
+    </div>
+    <h3>능력치 분배 <span class="${total === 54 ? "success" : "muted"}">${total} / 54</span></h3>
+    <div class="stat-grid">${statHtml}</div>
+    <div class="grid">
+      <label class="form-row">만트라<select data-draft="mantra">${Data.MANTRA_OPTIONS.map((m) => `<option value="${esc(m)}" ${m === draft.mantra ? "selected" : ""}>${esc(m)}</option>`).join("")}</select></label>
+      <label class="form-row">오리지널 마나 타입<select data-draft="originalManaType">
+        <option value="attribute" ${draft.originalManaType === "attribute" ? "selected" : ""}>속성</option>
+        <option value="special" ${draft.originalManaType === "special" ? "selected" : ""}>특수</option>
+      </select></label>
+      <label class="form-row">오리지널 마나 이름<input data-draft="originalManaName" value="${esc(draft.originalManaName)}"></label>
+      <label class="form-row">가장 강한 감정<input data-draft="strongestEmotion" value="${esc(draft.strongestEmotion)}"></label>
+    </div>
+    <label class="form-row">오리지널 마나 설명<textarea data-draft="originalManaDescription">${esc(draft.originalManaDescription)}</textarea></label>
+    <div class="grid">
+      <label class="form-row">세계 멸망 원인<textarea data-draft="worldDestructionCause">${esc(draft.worldDestructionCause)}</textarea></label>
+      <label class="form-row">멸망시킨 존재<textarea data-draft="destroyer">${esc(draft.destroyer)}</textarea></label>
+      <label class="form-row">존재의 형상<textarea data-draft="destroyerShape">${esc(draft.destroyerShape)}</textarea></label>
+      <label class="form-row">존재의 전투 방식<textarea data-draft="destroyerCombatStyle">${esc(draft.destroyerCombatStyle)}</textarea></label>
+      <label class="form-row">마지막 순간<textarea data-draft="finalMoment">${esc(draft.finalMoment)}</textarea></label>
+      <label class="form-row">목표<textarea data-draft="goal">${esc(draft.goal)}</textarea></label>
+    </div>
+    <div class="toolbar"><button id="confirmCreationBtn">시트 확인</button><button id="creationBackBtn">타이틀</button></div>
+  </div>`;
+  document.querySelectorAll("[data-minus]").forEach((btn) => {
+    btn.onclick = () => {
+      syncDraft();
+      draft.allocatedStats[btn.dataset.minus] = Math.max(0, draft.allocatedStats[btn.dataset.minus] - 1);
+      renderCreation();
+    };
+  });
+  document.querySelectorAll("[data-plus]").forEach((btn) => {
+    btn.onclick = () => {
+      syncDraft();
+      if (statTotal() < 54) draft.allocatedStats[btn.dataset.plus] += 1;
+      renderCreation();
+    };
+  });
+  document.getElementById("confirmCreationBtn").onclick = () => {
+    const nextErrors = validateCreation();
+    if (nextErrors.length) return renderCreation(nextErrors);
+    game.player = Data.createPlayerFromCreation(draft);
+    game.gameState = Data.GAME_STATES.CHARACTER_CONFIRM;
+    saveNow();
+    renderConfirm();
+  };
+  document.getElementById("creationBackBtn").onclick = renderTitle;
+}
+
+function renderConfirm() {
+  setControls(false);
+  setOverlay(true);
+  const p = game.player;
+  const d = p.officialDerivedStats;
+  overlay.innerHTML = `<div class="panel compact">
+    <h1>캐릭터 시트</h1>
+    <div class="grid">
+      <p><strong>이름</strong><br>${esc(p.profile.name)}</p><p><strong>성별</strong><br>${esc(p.profile.gender)}</p>
+      <p><strong>만트라</strong><br>${esc(p.mantra)}</p><p><strong>오리지널 마나</strong><br>${esc(p.originalMana.name)}</p>
+    </div>
+    <div class="grid three">${Data.STAT_KEYS.map((k) => `<p>${Data.STAT_LABELS[k]} ${p.primaryStats[k]}</p>`).join("")}</div>
+    <div class="grid"><p>HP ${d.maxHp}</p><p>MP ${d.maxMp}</p><p>MP 회복 ${d.mpRegen.toFixed(1)}</p><p>평타 피해 ${d.basicAttackDamage}</p></div>
+    <p class="muted">${esc(p.profile.goal)}</p>
+    <div class="toolbar"><button id="startFloorBtn">1층 시작</button><button id="editCreationBtn">수정</button></div>
+  </div>`;
+  document.getElementById("startFloorBtn").onclick = () => startFloorCombat(true);
+  document.getElementById("editCreationBtn").onclick = renderCreation;
+}
+
+function createInput() {
   const keys = { w: false, a: false, s: false, d: false };
-  const action = { attackPressed: false, dodgePressed: false, guardHeld: false, magicPressed: false, lockToggle: false };
-  let enabled = true;
-
-  const joystickRoot = document.getElementById("mobileJoystick");
-  const joystickBase = document.getElementById("joystickBase");
-  const joystickKnob = document.getElementById("joystickKnob");
-  const attackBtn = document.getElementById("attackBtn");
-  const dodgeBtn = document.getElementById("dodgeBtn");
-  const guardBtn = document.getElementById("guardBtn");
-  const magicBtn = document.getElementById("magicBtn");
-  const lockBtn = document.getElementById("lockBtn");
-
-  const movement = { keyboard: new BABYLON.Vector2(), joystick: new BABYLON.Vector2() };
+  const actions = { attack: false, dodge: false, guard: false, magic: false, skill: false, lock: false };
   const keyMap = { KeyW: "w", KeyA: "a", KeyS: "s", KeyD: "d" };
-  const maxDistance = 33;
-  let activeJoystickPointerId = null;
-
-  function setEnabled(v) {
-    enabled = v;
-    if (!enabled) {
-      movement.joystick.set(0, 0);
-      movement.keyboard.set(0, 0);
-      action.attackPressed = false;
-      action.dodgePressed = false;
-      action.guardHeld = false;
-      action.magicPressed = false;
-      action.lockToggle = false;
-      joystickKnob.style.left = "50%";
-      joystickKnob.style.top = "50%";
+  let enabled = false;
+  window.addEventListener("keydown", (e) => {
+    if (keyMap[e.code]) keys[keyMap[e.code]] = true;
+    if (e.code === "Space") actions.attack = true;
+    if (e.code === "ShiftLeft") actions.dodge = true;
+    if (e.code === "KeyQ") actions.guard = true;
+    if (e.code === "KeyE") actions.magic = true;
+    if (e.code === "KeyR") actions.skill = true;
+    if (e.code === "Tab") {
+      e.preventDefault();
+      actions.lock = true;
     }
-  }
-
-  function bindPressButton(button, onDown, onUp) {
-    let pointerId = null;
-    button.addEventListener("pointerdown", (e) => {
+  });
+  window.addEventListener("keyup", (e) => {
+    if (keyMap[e.code]) keys[keyMap[e.code]] = false;
+    if (e.code === "KeyQ") actions.guard = false;
+  });
+  function bind(id, name, held = false) {
+    const btn = document.getElementById(id);
+    btn.onpointerdown = (e) => {
       if (!enabled) return;
       e.preventDefault();
-      pointerId = e.pointerId;
-      button.setPointerCapture(pointerId);
-      button.classList.add("is-active");
-      onDown();
-    });
-
-    function stop(e) {
-      if (pointerId !== e.pointerId) return;
-      if (button.hasPointerCapture(pointerId)) button.releasePointerCapture(pointerId);
-      pointerId = null;
-      button.classList.remove("is-active");
-      onUp();
-    }
-
-    button.addEventListener("pointerup", stop);
-    button.addEventListener("pointercancel", stop);
+      btn.classList.add("is-active");
+      actions[name] = true;
+    };
+    const up = () => {
+      btn.classList.remove("is-active");
+      if (held) actions[name] = false;
+    };
+    btn.onpointerup = up;
+    btn.onpointercancel = up;
   }
-
-  bindPressButton(
-    attackBtn,
-    () => (action.attackPressed = true),
-    () => {}
-  );
-  bindPressButton(
-    dodgeBtn,
-    () => (action.dodgePressed = true),
-    () => {}
-  );
-  bindPressButton(
-    guardBtn,
-    () => (action.guardHeld = true),
-    () => (action.guardHeld = false)
-  );
-  bindPressButton(
-    magicBtn,
-    () => (action.magicPressed = true),
-    () => {}
-  );
-  bindPressButton(
-    lockBtn,
-    () => (action.lockToggle = true),
-    () => {}
-  );
-
-  function updateJoystick(clientX, clientY) {
-    const rect = joystickBase.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    let dx = clientX - cx;
-    let dy = clientY - cy;
-    const dist = Math.hypot(dx, dy);
-    if (dist > maxDistance) {
-      const ratio = maxDistance / dist;
-      dx *= ratio;
-      dy *= ratio;
-    }
-    movement.joystick.set(dx / maxDistance, -dy / maxDistance);
-    joystickKnob.style.left = `calc(50% + ${dx}px)`;
-    joystickKnob.style.top = `calc(50% + ${dy}px)`;
-  }
-
-  joystickRoot.addEventListener("pointerdown", (e) => {
-    if (!enabled) return;
-    e.preventDefault();
-    activeJoystickPointerId = e.pointerId;
-    joystickRoot.setPointerCapture(e.pointerId);
-    updateJoystick(e.clientX, e.clientY);
-  });
-  joystickRoot.addEventListener("pointermove", (e) => {
-    if (!enabled || e.pointerId !== activeJoystickPointerId) return;
-    e.preventDefault();
-    updateJoystick(e.clientX, e.clientY);
-  });
-  function stopJoystick(e) {
-    if (e.pointerId !== activeJoystickPointerId) return;
-    if (joystickRoot.hasPointerCapture(e.pointerId)) joystickRoot.releasePointerCapture(e.pointerId);
-    activeJoystickPointerId = null;
-    movement.joystick.set(0, 0);
-    joystickKnob.style.left = "50%";
-    joystickKnob.style.top = "50%";
-  }
-  joystickRoot.addEventListener("pointerup", stopJoystick);
-  joystickRoot.addEventListener("pointercancel", stopJoystick);
-
-  scene.onKeyboardObservable.add((kb) => {
-    const isDown = kb.type === BABYLON.KeyboardEventTypes.KEYDOWN;
-    const isUp = kb.type === BABYLON.KeyboardEventTypes.KEYUP;
-    const code = kb.event.code;
-    if (!enabled) return;
-
-    if (keyMap[code]) {
-      if (isDown) keys[keyMap[code]] = true;
-      if (isUp) keys[keyMap[code]] = false;
-    }
-
-    if (code === "Space" && isDown) action.attackPressed = true;
-    if ((code === "ShiftLeft" || code === "ShiftRight") && isDown) action.dodgePressed = true;
-    if (code === "KeyQ" && isDown) action.magicPressed = true;
-    if (code === "KeyR" && isDown) action.lockToggle = true;
-    if (code === "KeyF") {
-      if (isDown) action.guardHeld = true;
-      if (isUp) action.guardHeld = false;
-    }
-  });
-
+  bind("attackBtn", "attack");
+  bind("dodgeBtn", "dodge");
+  bind("guardBtn", "guard", true);
+  bind("magicBtn", "magic");
+  bind("skillBtn", "skill");
+  bind("lockBtn", "lock");
   return {
-    setEnabled,
-    consumeActions() {
-      const out = { ...action };
-      action.attackPressed = false;
-      action.dodgePressed = false;
-      action.magicPressed = false;
-      action.lockToggle = false;
+    setEnabled: (v) => (enabled = v),
+    move: () => new BABYLON.Vector2((keys.d ? 1 : 0) - (keys.a ? 1 : 0), (keys.w ? 1 : 0) - (keys.s ? 1 : 0)),
+    actions: () => {
+      const out = { ...actions };
+      actions.attack = actions.dodge = actions.magic = actions.skill = actions.lock = false;
       return out;
     },
-    getMoveInput() {
-      let x = 0;
-      let z = 0;
-      if (keys.w) z += 1;
-      if (keys.s) z -= 1;
-      if (keys.a) x -= 1;
-      if (keys.d) x += 1;
-      movement.keyboard.set(x, z);
-      const move = movement.keyboard.add(movement.joystick);
-      if (move.lengthSquared() > 1) move.normalize();
-      return move;
-    },
-    setActionButtonsState(state) {
-      attackBtn.disabled = !state.attack;
-      dodgeBtn.disabled = !state.dodge;
-      magicBtn.disabled = !state.magic;
-      lockBtn.classList.toggle("is-active", !!state.locked);
+    buttonState: (cooldowns) => {
+      document.getElementById("attackBtn").disabled = cooldowns.attack > 0;
+      document.getElementById("dodgeBtn").disabled = cooldowns.dodge > 0;
+      document.getElementById("magicBtn").disabled = cooldowns.magic > 0;
+      document.getElementById("skillBtn").disabled = cooldowns.skill > 0;
     },
   };
 }
 
-function getFacing(mesh) {
-  if (!mesh.rotationQuaternion) mesh.rotationQuaternion = BABYLON.Quaternion.Identity();
-  const m = BABYLON.Matrix.Identity();
-  mesh.rotationQuaternion.toRotationMatrix(m);
-  return BABYLON.Vector3.TransformNormal(BABYLON.Axis.Z, m).normalize();
+function material(name, color) {
+  const mat = new BABYLON.StandardMaterial(name, scene);
+  mat.diffuseColor = color;
+  mat.emissiveColor = color.scale(0.12);
+  return mat;
 }
 
-function createBattleSystem(scene, player, progression) {
-  const playerState = {
-    hp: 100, maxHp: 100, mp: 100, maxMp: 100, mpRegen: 1,
-    moveSpeed: 4.5, attackDamage: 20, critChance: 0.05,
-    dodgeSpeed: 11, dodgeDuration: 0.22, dodgeDistance: 2.6,
-    dodgeTimer: 0, dodging: false, invincible: false, guardHeld: false,
-    attackTimer: 0, attackCooldown: 0, dodgeCooldown: 0, magicCooldown: 0,
-    attackHitDone: false, feedback: "", feedbackTimer: 0, hitFlashTimer: 0,
-  };
-  let enemy = null; let enemyFront = null; let enemyMat = null;
-  let enemyDescriptor = { type: "default", mapId: "defaultCylinderRoom" };
-  const enemyState = { hp: 100, maxHp: 100, moveSpeed: 2.6, attackDamage: 12, attackRange: 1.6, chaseRange: 10, attackCooldown: 0, mode: "approach", modeTimer: 0, attackHitDone: false, dashTimer: 0, dashDir: new BABYLON.Vector3(0, 0, 1), hitFlashTimer: 0 };
-  const projectileState = [];
-  let arenaRadius = 8.2;
-  let combatState = COMBAT_STATE.COMBAT_READY;
-  let lockOnActive = false;
-  const battle = { phase: "playing" };
-
-  function clampInsideArena(position) {
-    const radius = arenaRadius - 0.35;
-    const len = Math.hypot(position.x, position.z);
-    if (len > radius && len > 0.0001) { const s = radius / len; position.x *= s; position.z *= s; }
-  }
-  function spawnFx(pos, color) {
-    const r = BABYLON.MeshBuilder.CreateTorus(`fx_${Date.now()}_${Math.random()}`, { diameter: 0.7, thickness: 0.05 }, scene);
-    r.position.copyFrom(pos); r.rotation.x = Math.PI / 2;
-    const m = new BABYLON.StandardMaterial(`fxm_${Date.now()}_${Math.random()}`, scene); m.emissiveColor = color; m.alpha = 0.8; r.material = m;
-    setTimeout(() => r.dispose(), 120);
-  }
-  function applyKnockback(target, sourcePos, dist) {
-    if (!target) return; const d = target.position.subtract(sourcePos); d.y = 0; if (d.lengthSquared() < 0.0001) return; d.normalize();
-    target.position.addInPlace(d.scale(dist)); clampInsideArena(target.position);
-  }
-  function recomputePlayerFromStats() {
-    const s = progression.stats, b = progression.bonus;
-    playerState.maxHp = 100 + s.vitality * 8 + b.maxHp;
-    playerState.maxMp = 100 + s.intelligence * 5;
-    playerState.mpRegen = 0.8 + s.wisdom * 0.08;
-    playerState.moveSpeed = 3.5 + s.agility * 0.08 + b.moveSpeed;
-    playerState.attackDamage = 8 + s.strength * 1.6 + b.attack;
-    playerState.critChance = clamp01(0.05 + s.luck * 0.004 + b.critChance);
-    playerState.dodgeDistance = 2.2 + s.agility * 0.03 + b.dodgeDistance;
-    playerState.dodgeSpeed = playerState.dodgeDistance / playerState.dodgeDuration;
-    playerState.hp = Math.min(playerState.hp, playerState.maxHp);
-    playerState.mp = Math.min(playerState.mp, playerState.maxMp);
-  }
-  function spawnEnemyForFloor(floor) {
-    if (enemy) { enemy.dispose(); enemyFront.dispose(); }
-    const maps = ["defaultCylinderRoom", "beastArena", "mageChamber", "bossVoidRoom"];
-    enemyDescriptor = { type: floor % 4 === 0 ? "boss" : floor % 2 === 0 ? "beast" : "soldier", mapId: maps[(floor - 1) % maps.length] };
-    enemy = BABYLON.MeshBuilder.CreateCapsule("enemy", { height: 2, radius: 0.4 }, scene);
-    enemy.position = new BABYLON.Vector3(0, 1, 5); enemy.rotationQuaternion = BABYLON.Quaternion.Identity();
-    enemyMat = new BABYLON.StandardMaterial(`enemyMat${floor}`, scene); enemyMat.diffuseColor = new BABYLON.Color3(1, 0.65, 0.65); enemy.material = enemyMat;
-    enemyFront = BABYLON.MeshBuilder.CreateCylinder("enemyFront", { diameterTop: 0, diameterBottom: 0.24, height: 0.35, tessellation: 4 }, scene);
-    enemyFront.parent = enemy; enemyFront.position = new BABYLON.Vector3(0, 1.0, 0.55); enemyFront.rotation.x = Math.PI / 2;
-    const fm = new BABYLON.StandardMaterial(`enemyFrontMat${floor}`, scene); fm.emissiveColor = new BABYLON.Color3(1, 0.25, 0.25); enemyFront.material = fm;
-    const f = Math.max(1, floor);
-    enemyState.maxHp = 90 + (f - 1) * 16;
-    enemyState.hp = enemyState.maxHp;
-    enemyState.moveSpeed = 2.2 + f * 0.1;
-    enemyState.attackDamage = 9 + f * 1.6;
-    enemyState.attackRange = 1.6 + Math.min(0.4, f * 0.02);
-    enemyState.attackCooldown = Math.max(0.7, 1.35 - f * 0.03);
-    enemyState.mode = "approach"; enemyState.modeTimer = 0; enemyState.attackHitDone = false;
-    battle.phase = "playing"; combatState = COMBAT_STATE.COMBAT_ACTIVE; lockOnActive = false;
-  }
-  function recoverFull() { playerState.hp = playerState.maxHp; playerState.mp = playerState.maxMp; }
-  function dealDamageToEnemy(amount) {
-    if (enemyState.hp <= 0) return;
-    enemyState.hp = Math.max(0, enemyState.hp - amount); enemyState.hitFlashTimer = 0.12; applyKnockback(enemy, player.position, 0.55);
-    if (enemyState.hp <= 0) { battle.phase = "clear"; combatState = COMBAT_STATE.ENEMY_DEAD; lockOnActive = false; }
-  }
-  function dealDamageToPlayer(amount) {
-    if (playerState.invincible) return;
-    let final = amount;
-    if (playerState.guardHeld && enemy) {
-      const f = getFacing(player); const e = enemy.position.subtract(player.position); e.y = 0;
-      if (e.lengthSquared() > 0) { e.normalize(); if (BABYLON.Vector3.Dot(f, e) >= 0.12 + progression.bonus.guardAngle) { final = 0; playerState.feedback = "가드 성공"; playerState.feedbackTimer = 0.2; spawnFx(player.position.add(new BABYLON.Vector3(0, 1, 0)), new BABYLON.Color3(0.3, 0.6, 1)); } }
-    }
-    playerState.hp = Math.max(0, playerState.hp - final);
-    if (final > 0 && enemy) { playerState.hitFlashTimer = 0.1; applyKnockback(player, enemy.position, playerState.guardHeld ? 0.2 : 0.5); }
-    if (playerState.hp <= 0) { battle.phase = "defeat"; combatState = COMBAT_STATE.PLAYER_DEAD; lockOnActive = false; }
-  }
-  function castMagic() {
-    const spell = progression.spellSlots.known.find((s) => s.id === progression.spellSlots.equipped);
-    if (!spell || !enemy) return;
-    if (playerState.mp < spell.mpCost) { playerState.feedback = "MP 부족"; playerState.feedbackTimer = 0.2; return; }
-    playerState.mp -= spell.mpCost; playerState.feedback = "마법"; playerState.feedbackTimer = 0.2;
-    const forward = getFacing(player);
-    const b = BABYLON.MeshBuilder.CreateSphere(`magic_${Date.now()}`, { diameter: spell.radius * 2 }, scene);
-    b.position = player.position.add(forward.scale(0.9)).add(new BABYLON.Vector3(0, 0.6, 0));
-    const m = new BABYLON.StandardMaterial(`magicMat_${Date.now()}`, scene); m.emissiveColor = new BABYLON.Color3(1, 0.45, 0.18); b.material = m;
-    projectileState.push({ mesh: b, dir: forward, speed: spell.speed, remain: spell.range, damage: playerState.attackDamage * spell.damageScale });
-  }
-
-  return {
-    setupForFloor(floor) { recomputePlayerFromStats(); spawnEnemyForFloor(floor); player.position.set(0, 1, 0); player.rotationQuaternion = BABYLON.Quaternion.Identity(); },
-    recoverFull,
-    setArenaRadius(radius) { arenaRadius = radius; clampInsideArena(player.position); if (enemy) clampInsideArena(enemy.position); },
-    clampAllInsideArena() { clampInsideArena(player.position); if (enemy) clampInsideArena(enemy.position); },
-    update(delta, moveDir, actions) {
-      if (battle.phase !== "playing") return;
-      playerState.attackCooldown = Math.max(0, playerState.attackCooldown - delta);
-      playerState.dodgeCooldown = Math.max(0, playerState.dodgeCooldown - delta);
-      playerState.magicCooldown = Math.max(0, playerState.magicCooldown - delta);
-      playerState.mp = Math.min(playerState.maxMp, playerState.mp + playerState.mpRegen * delta);
-      playerState.guardHeld = !!actions.guardHeld && !playerState.dodging;
-      enemyState.attackCooldown = Math.max(0, enemyState.attackCooldown - delta);
-      if (actions.attackPressed && playerState.attackCooldown <= 0 && !playerState.dodging) { playerState.attackTimer = 0.16; playerState.attackCooldown = 0.32; playerState.attackHitDone = false; spawnFx(player.position.add(new BABYLON.Vector3(0, 1, 0.7)), new BABYLON.Color3(1, 0.5, 0.2)); }
-      if (actions.dodgePressed && !playerState.dodging && playerState.dodgeCooldown <= 0) { playerState.dodging = true; playerState.dodgeTimer = playerState.dodgeDuration; playerState.dodgeCooldown = 0.6; playerState.invincible = true; }
-      if (actions.magicPressed && playerState.magicCooldown <= 0) { playerState.magicCooldown = 0.38; castMagic(); }
-      if (playerState.attackTimer > 0) {
-        playerState.attackTimer -= delta;
-        if (!playerState.attackHitDone && enemy) {
-          const toEnemy = enemy.position.subtract(player.position); toEnemy.y = 0;
-          if (toEnemy.length() <= 1.85) { toEnemy.normalize(); if (BABYLON.Vector3.Dot(getFacing(player), toEnemy) > 0.2) { const crit = Math.random() < playerState.critChance ? 1.5 : 1; dealDamageToEnemy(playerState.attackDamage * crit); playerState.attackHitDone = true; } }
-        }
-      }
-      if (playerState.dodging) {
-        const d = moveDir.lengthSquared() > 0 ? moveDir : getFacing(player);
-        player.position.addInPlace(d.scale(playerState.dodgeSpeed * delta)); clampInsideArena(player.position);
-        playerState.dodgeTimer -= delta; if (playerState.dodgeTimer < 0.12) playerState.invincible = false; if (playerState.dodgeTimer <= 0) { playerState.dodging = false; playerState.invincible = false; }
-      }
-      if (enemy) {
-        const toPlayer = player.position.subtract(enemy.position); toPlayer.y = 0; const dist = toPlayer.length();
-        if (dist > 0.001) { const dir = toPlayer.normalize(); const yaw = Math.atan2(dir.x, dir.z); enemy.rotationQuaternion = BABYLON.Quaternion.Slerp(enemy.rotationQuaternion, BABYLON.Quaternion.FromEulerAngles(0, yaw, 0), Math.min(1, delta * 8)); }
-        enemyState.modeTimer = Math.max(0, enemyState.modeTimer - delta);
-        if (enemyState.mode === "approach") { if (dist > 2.1) enemy.position.addInPlace(toPlayer.normalize().scale(enemyState.moveSpeed * delta)); else { enemyState.mode = "hold"; enemyState.modeTimer = 0.4; } }
-        else if (enemyState.mode === "hold") {
-          if (dist < 1.4) enemy.position.addInPlace(toPlayer.normalize().scale(-enemyState.moveSpeed * 0.7 * delta));
-          if (enemyState.modeTimer <= 0) {
-            if (enemyState.attackCooldown <= 0 && Math.random() < 0.35) { enemyState.mode = "dash"; enemyState.dashTimer = 0.25; enemyState.dashDir.copyFrom(toPlayer.normalize()); enemyState.attackHitDone = false; enemyState.attackCooldown = Math.max(0.65, 1.25 - progression.floor * 0.04); }
-            else if (enemyState.attackCooldown <= 0) { enemyState.mode = "basicAttack"; enemyState.modeTimer = 0.22; enemyState.attackHitDone = false; enemyState.attackCooldown = Math.max(0.72, 1.35 - progression.floor * 0.03); }
-            else { enemyState.mode = "retreat"; enemyState.modeTimer = 0.25; }
-          }
-        } else if (enemyState.mode === "basicAttack") {
-          if (!enemyState.attackHitDone && dist <= enemyState.attackRange + 0.25) { enemyState.attackHitDone = true; dealDamageToPlayer(enemyState.attackDamage); }
-          if (enemyState.modeTimer <= 0) { enemyState.mode = "cooldown"; enemyState.modeTimer = 0.25; }
-        } else if (enemyState.mode === "dash") {
-          enemy.position.addInPlace(enemyState.dashDir.scale(enemyState.moveSpeed * 2.6 * delta)); enemyState.dashTimer -= delta;
-          if (!enemyState.attackHitDone && dist <= enemyState.attackRange + 0.35) { enemyState.attackHitDone = true; dealDamageToPlayer(enemyState.attackDamage * 1.25); }
-          if (enemyState.dashTimer <= 0) { enemyState.mode = "retreat"; enemyState.modeTimer = 0.2; }
-        } else if (enemyState.mode === "retreat") {
-          if (dist < 2.6) enemy.position.addInPlace(toPlayer.normalize().scale(-enemyState.moveSpeed * delta));
-          if (enemyState.modeTimer <= 0) { enemyState.mode = "cooldown"; enemyState.modeTimer = 0.25; }
-        } else if (enemyState.mode === "cooldown" && enemyState.modeTimer <= 0) enemyState.mode = dist > 2.4 ? "approach" : "hold";
-        if (dist > 6.5) enemyState.mode = "approach";
-        clampInsideArena(enemy.position);
-      }
-      for (let i = projectileState.length - 1; i >= 0; i--) {
-        const p = projectileState[i]; const step = p.speed * delta; p.mesh.position.addInPlace(p.dir.scale(step)); p.remain -= step;
-        if (enemy) { const d = BABYLON.Vector3.Distance(p.mesh.position, enemy.position.add(new BABYLON.Vector3(0, 0.7, 0))); if (d <= 0.8) { dealDamageToEnemy(p.damage); p.remain = 0; } }
-        if (p.remain <= 0) { p.mesh.dispose(); projectileState.splice(i, 1); }
-      }
-      playerState.feedbackTimer = Math.max(0, playerState.feedbackTimer - delta); if (playerState.feedbackTimer <= 0) playerState.feedback = "";
-      playerState.hitFlashTimer = Math.max(0, playerState.hitFlashTimer - delta); enemyState.hitFlashTimer = Math.max(0, enemyState.hitFlashTimer - delta);
-    },
-    getPlayerState() { return { ...playerState }; },
-    getEnemyState() { return { ...enemyState, mesh: enemy }; },
-    getEnemyDescriptor() { return { ...enemyDescriptor }; },
-    despawnEnemy() { if (enemy) enemy.dispose(); if (enemyFront) enemyFront.dispose(); enemy = null; enemyFront = null; enemyMat = null; lockOnActive = false; combatState = COMBAT_STATE.INNER_WORLD; projectileState.forEach((p) => p.mesh.dispose()); projectileState.length = 0; },
-    getPhase() { return battle.phase; },
-    getCombatState() { return combatState; },
-    toggleLockOn() { if (enemy && enemyState.hp > 0) lockOnActive = !lockOnActive; else lockOnActive = false; return lockOnActive; },
-    isLockOnActive() { return lockOnActive; },
-    getCooldownState() { return { attack: playerState.attackCooldown <= 0, dodge: playerState.dodgeCooldown <= 0 && !playerState.dodging, magic: playerState.magicCooldown <= 0 && playerState.mp >= 14 }; },
-    setPlayerEmissive(playerMat) {
-      if (playerState.dodging) playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.9, 1);
-      else if (playerState.guardHeld) playerMat.emissiveColor = new BABYLON.Color3(0.2, 0.45, 1);
-      else if (playerState.attackTimer > 0) playerMat.emissiveColor = new BABYLON.Color3(1, 0.45, 0.2);
-      else playerMat.emissiveColor = BABYLON.Color3.Black();
-      playerMat.alpha = playerState.dodging ? 0.55 : 1;
-      if (playerState.hitFlashTimer > 0) playerMat.emissiveColor = new BABYLON.Color3(1, 0.2, 0.2);
-      if (enemyMat) { enemyMat.emissiveColor = enemyState.mode === "basicAttack" || enemyState.mode === "dash" ? new BABYLON.Color3(1, 0.2, 0.2) : BABYLON.Color3.Black(); if (enemyState.hitFlashTimer > 0) enemyMat.emissiveColor = new BABYLON.Color3(1, 1, 1); }
-    },
-  };
-}
-
-function createScene() {
-  const scene = new BABYLON.Scene(engine);
-  const progression = createProgressionState();
-  const mapManager = createMapManager(scene);
-  let gameMode = MAP_STATE.FLOOR_COMBAT;
-
-  const camera = new BABYLON.ArcRotateCamera("camera", Math.PI / 2, Math.PI / 3, 12, new BABYLON.Vector3(0, 1, 0), scene);
-  camera.attachControl(canvas, true);
-  camera.lowerRadiusLimit = 6;
-  camera.upperRadiusLimit = 18;
-
-  const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
-  light.intensity = 0.95;
-
-  BABYLON.MeshBuilder.CreateGround("ground", { width: 20, height: 20 }, scene);
-
-  const player = BABYLON.MeshBuilder.CreateCapsule("player", { height: 2, radius: 0.4 }, scene);
-  player.position.y = 1;
-  player.rotationQuaternion = BABYLON.Quaternion.Identity();
-  const playerMat = new BABYLON.StandardMaterial("playerMat", scene);
-  playerMat.diffuseColor = new BABYLON.Color3(0.9, 0.9, 1);
-  player.material = playerMat;
-
-  const playerFront = BABYLON.MeshBuilder.CreateCylinder("playerFront", { diameterTop: 0, diameterBottom: 0.24, height: 0.35, tessellation: 4 }, scene);
-  playerFront.parent = player;
-  playerFront.position = new BABYLON.Vector3(0, 1, 0.55);
-  playerFront.rotation.x = Math.PI / 2;
-  const playerFrontMat = new BABYLON.StandardMaterial("playerFrontMat", scene);
-  playerFrontMat.emissiveColor = new BABYLON.Color3(0.2, 1, 0.2);
-  playerFront.material = playerFrontMat;
-
-  const input = createInputController(scene);
-  const battle = createBattleSystem(scene, player, progression);
-  battle.setupForFloor(progression.floor);
-  const initialMap = mapManager.showFloorCombatMap(battle.getEnemyDescriptor(), { floor: progression.floor, level: progression.level });
-  battle.setArenaRadius(initialMap.bounds?.arenaRadius || 8.2);
-
-  const hud = {
-    floorInfo: document.getElementById("floorInfo"),
-    progressInfo: document.getElementById("progressInfo"),
-    playerHp: document.getElementById("playerHp"),
-    playerMp: document.getElementById("playerMp"),
-    enemyHp: document.getElementById("enemyHp"),
-    mantraInfo: document.getElementById("mantraInfo"),
-    spellInfo: document.getElementById("spellInfo"),
-    battleMessage: document.getElementById("battleMessage"),
-    actionFeedback: document.getElementById("actionFeedback"),
-  };
-
-  const ui = {
-    inner: document.getElementById("innerWorld"),
-    innerStepText: document.getElementById("innerStepText"),
-    rewardPanel: document.getElementById("rewardPanel"),
-    rewardChoices: document.getElementById("rewardChoices"),
-    rerollBtn: document.getElementById("rerollBtn"),
-    statPanel: document.getElementById("statPanel"),
-    statList: document.getElementById("statList"),
-    statDoneBtn: document.getElementById("statDoneBtn"),
-    nextFloorBtn: document.getElementById("nextFloorBtn"),
-  };
-
-  function enterInnerWorld() {
-    progression.innerWorld.active = true;
-    progression.innerWorld.step = "recovery";
-    progression.innerWorld.rewardChosen = false;
-    progression.innerWorld.statsDone = false;
-    battle.recoverFull();
-
-    progression.level += 5;
-    progression.statPoints += 15;
-    progression.coins += 1;
-    progression.currentRewards = sampleRewards();
-    battle.despawnEnemy();
-
-    input.setEnabled(false);
-    ui.inner.classList.remove("hidden");
-    gameMode = MAP_STATE.INNER_WORLD;
-    mapManager.showInnerWorldMap({ floor: progression.floor, level: progression.level });
-    camera.radius = 16;
-    camera.beta = Math.PI / 2.8;
-
-    progression.innerWorld.step = "reward";
-    renderInnerWorld();
-  }
-
-  function leaveInnerWorldToNextFloor() {
-    progression.floor += 1;
-    progression.innerWorld.active = false;
-    progression.innerWorld.step = "none";
-    ui.inner.classList.add("hidden");
-    input.setEnabled(true);
-    battle.setupForFloor(progression.floor);
-    const floorMap = mapManager.showFloorCombatMap(battle.getEnemyDescriptor(), { floor: progression.floor, level: progression.level });
-    battle.setArenaRadius(floorMap.bounds?.arenaRadius || 8.2);
-    gameMode = MAP_STATE.FLOOR_COMBAT;
-    camera.radius = 11;
-    camera.beta = Math.PI / 3.2;
-  }
-
-  function renderStatPanel() {
-    ui.statList.innerHTML = "";
-    const labels = {
-      strength: "힘",
-      agility: "민첩",
-      vitality: "체력",
-      intelligence: "지능",
-      wisdom: "지혜",
-      luck: "외모(운)",
-    };
-
-    Object.keys(labels).forEach((key) => {
-      const wrap = document.createElement("div");
-      wrap.textContent = `${labels[key]}: ${progression.stats[key]}`;
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = "+1";
-      btn.disabled = progression.statPoints <= 0;
-      btn.addEventListener("click", () => {
-        if (progression.statPoints <= 0) return;
-        progression.stats[key] += 1;
-        progression.statPoints -= 1;
-        renderInnerWorld();
-      });
-      wrap.appendChild(btn);
-      ui.statList.appendChild(wrap);
-    });
-  }
-
-  function renderRewardPanel() {
-    ui.rewardChoices.innerHTML = "";
-    progression.currentRewards.forEach((reward) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = reward.label;
-      btn.disabled = progression.innerWorld.rewardChosen;
-      btn.addEventListener("click", () => {
-        reward.apply(progression);
-        progression.innerWorld.rewardChosen = true;
-        progression.innerWorld.step = "stats";
-        renderInnerWorld();
-      });
-      ui.rewardChoices.appendChild(btn);
-    });
-    ui.rerollBtn.disabled = progression.coins <= 0 || progression.innerWorld.rewardChosen;
-  }
-
-  function renderInnerWorld() {
-    const step = progression.innerWorld.step;
-    ui.innerStepText.textContent =
-      step === "reward"
-        ? "순서 1/3: 보상 선택"
-        : step === "stats"
-          ? "순서 2/3: 스탯 투자"
-          : step === "next"
-            ? "순서 3/3: 다음 층 진입"
-            : "회복";
-
-    ui.rewardPanel.classList.toggle("hidden", step !== "reward");
-    ui.statPanel.classList.toggle("hidden", step !== "stats");
-    ui.nextFloorBtn.classList.toggle("hidden", step !== "next");
-
-    if (step === "reward") renderRewardPanel();
-    if (step === "stats") renderStatPanel();
-  }
-
-  ui.rerollBtn.addEventListener("click", () => {
-    if (progression.coins <= 0 || progression.innerWorld.step !== "reward") return;
-    progression.coins -= 1;
-    progression.currentRewards = sampleRewards();
-    renderInnerWorld();
-  });
-
-  ui.statDoneBtn.addEventListener("click", () => {
-    if (progression.innerWorld.step !== "stats") return;
-    progression.innerWorld.statsDone = true;
-    progression.innerWorld.step = "next";
-    renderInnerWorld();
-  });
-
-  ui.nextFloorBtn.addEventListener("click", () => {
-    if (progression.innerWorld.step !== "next") return;
-    leaveInnerWorldToNextFloor();
-  });
-
-  scene.onBeforeRenderObservable.add(() => {
-    const dt = engine.getDeltaTime() / 1000;
-
-    const moveInput = input.getMoveInput();
-    const eState = battle.getEnemyState();
-    let baseForward = camera.getForwardRay().direction;
-    baseForward.y = 0;
-    if (baseForward.lengthSquared() > 0) baseForward.normalize();
-    let baseRight = BABYLON.Vector3.Cross(BABYLON.Axis.Y, baseForward).normalize();
-    if (battle.isLockOnActive() && eState.mesh && gameMode === MAP_STATE.FLOOR_COMBAT) {
-      baseForward = eState.mesh.position.subtract(player.position);
-      baseForward.y = 0;
-      if (baseForward.lengthSquared() > 0) baseForward.normalize();
-      baseRight = BABYLON.Vector3.Cross(BABYLON.Axis.Y, baseForward).normalize();
-    }
-
-    const moveDir = baseRight.scale(moveInput.x).add(baseForward.scale(moveInput.y));
-    if (moveDir.lengthSquared() > 0) {
-      moveDir.normalize();
-      const yaw = Math.atan2(moveDir.x, moveDir.z);
-      const target = BABYLON.Quaternion.FromEulerAngles(0, yaw, 0);
-      player.rotationQuaternion = BABYLON.Quaternion.Slerp(player.rotationQuaternion, target, Math.min(1, dt * 10));
-    }
-
-    const actions = input.consumeActions();
-    if (actions.lockToggle && gameMode === MAP_STATE.FLOOR_COMBAT) {
-      battle.toggleLockOn();
-    }
-    if (gameMode === MAP_STATE.FLOOR_COMBAT) {
-      battle.update(dt, moveDir, actions);
-    }
-
-    const pState = battle.getPlayerState();
-    if (
-      gameMode === MAP_STATE.FLOOR_COMBAT &&
-      !pState.dodging &&
-      battle.getPhase() === "playing" &&
-      moveDir.lengthSquared() > 0
-    ) {
-      player.position.addInPlace(moveDir.scale(pState.moveSpeed * dt));
-      battle.clampAllInsideArena();
-    }
-
-    battle.setPlayerEmissive(playerMat);
-    if (battle.isLockOnActive() && eState.mesh && gameMode === MAP_STATE.FLOOR_COMBAT) {
-      const center = player.position.add(eState.mesh.position).scale(0.5);
-      camera.setTarget(center);
-      const dist = BABYLON.Vector3.Distance(player.position, eState.mesh.position);
-      camera.radius = Math.min(16, Math.max(8, dist * 1.8));
-      camera.beta = Math.PI / 3.1;
-    } else {
-      camera.setTarget(player.position);
-    }
-
-    hud.floorInfo.textContent = `Floor: ${progression.floor}`;
-    hud.progressInfo.textContent = `Lv ${progression.level} | Stat Pts ${progression.statPoints} | Coin ${progression.coins}`;
-    hud.playerHp.textContent = `플레이어 HP: ${Math.ceil(pState.hp)} / ${Math.ceil(pState.maxHp)}`;
-    hud.playerMp.textContent = `플레이어 MP: ${Math.ceil(pState.mp)} / ${Math.ceil(pState.maxMp)}`;
-    hud.enemyHp.textContent =
-      gameMode === MAP_STATE.FLOOR_COMBAT
-        ? `적 HP: ${Math.ceil(eState.hp)} / ${Math.ceil(eState.maxHp)}`
-        : "적 HP: -";
-    hud.mantraInfo.textContent = `만트라: ${progression.mantra}`;
-    const equippedSpell = progression.spellSlots.known.find((s) => s.id === progression.spellSlots.equipped);
-    hud.spellInfo.textContent = `마법: ${equippedSpell ? equippedSpell.name : "-"}`;
-    hud.actionFeedback.textContent = pState.feedback;
-    input.setActionButtonsState({ ...battle.getCooldownState(), locked: battle.isLockOnActive() });
-
-    if (gameMode === MAP_STATE.FLOOR_COMBAT && battle.getPhase() === "clear") {
-      hud.battleMessage.textContent = "층 클리어";
-      if (!progression.innerWorld.active) {
-        enterInnerWorld();
-      }
-    } else if (gameMode === MAP_STATE.FLOOR_COMBAT && battle.getPhase() === "defeat") {
-      hud.battleMessage.textContent = "패배";
-      input.setEnabled(false);
-    } else {
-      hud.battleMessage.textContent = "";
-    }
-    if (gameMode === MAP_STATE.INNER_WORLD && battle.isLockOnActive()) {
-      battle.toggleLockOn();
-    }
-  });
-
-  return scene;
-}
-
-const scene = createScene();
-engine.runRenderLoop(() => scene.render());
-window.addEventListener("resize", () => engine.resize());

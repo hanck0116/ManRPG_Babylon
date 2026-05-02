@@ -3,55 +3,61 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ManRPG</title>
+  <title>ManRPG Babylon</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <canvas id="gameCanvas"></canvas>
-  <div id="hud">
-    <div id="floorInfo">Floor: 1</div>
-    <div id="progressInfo">Lv 1 | Stat Pts 0 | Coin 0</div>
-    <div id="playerHp">플레이어 HP: 100 / 100</div>
-    <div id="playerMp">플레이어 MP: 100 / 100</div>
-    <div id="enemyHp">적 HP: 100 / 100</div>
-    <div id="mantraInfo">만트라: 화염</div>
-    <div id="spellInfo">마법: 화염구</div>
+
+  <div id="hud" class="hud hidden">
+    <div class="hud-row">
+      <span id="floorInfo">Floor 1</span>
+      <span id="modeInfo">TITLE</span>
+    </div>
+    <div id="progressInfo">Lv 1 | Stat Pts 0 | Coin 0 | Ticket 0</div>
+    <div id="playerHp">HP 0 / 0</div>
+    <div id="playerMp">MP 0 / 0</div>
+    <div id="enemyHp">Enemy HP -</div>
+    <div id="mantraInfo">만트라 -</div>
+    <div id="spellInfo">마법 -</div>
+    <div id="preparedInfo">준비된 마법 -</div>
     <div id="battleMessage"></div>
     <div id="actionFeedback"></div>
   </div>
 
-  <div id="mobileJoystick" aria-hidden="true">
+  <div id="interactionHint" class="interaction-hint hidden"></div>
+  <div id="toast" class="toast hidden"></div>
+
+  <div id="mobileJoystick" class="hidden" aria-hidden="true">
     <div id="joystickBase">
       <div id="joystickKnob"></div>
     </div>
   </div>
-  <div id="actionButtons">
+
+  <div id="actionButtons" class="hidden">
     <button id="attackBtn" type="button">공격</button>
     <button id="dodgeBtn" type="button">회피</button>
     <button id="guardBtn" type="button">가드</button>
     <button id="magicBtn" type="button">마법</button>
+    <button id="skillBtn" type="button">스킬</button>
     <button id="lockBtn" type="button">락온</button>
   </div>
-  <div id="innerWorld" class="hidden">
-    <h2>심상세계</h2>
-    <p id="innerStepText">회복 중...</p>
-    <div id="rewardPanel" class="hidden">
-      <h3>보상 선택 (2개 중 1개)</h3>
-      <div id="rewardChoices"></div>
-      <button id="rerollBtn" type="button">리롤(코인 1)</button>
-    </div>
-    <div id="statPanel" class="hidden">
-      <h3>스탯 투자</h3>
-      <div id="statList"></div>
-      <button id="statDoneBtn" type="button">투자 완료</button>
-    </div>
-    <button id="nextFloorBtn" class="hidden" type="button">다음 층 진입</button>
-  </div>
+
+  <div id="appOverlay" class="screen-panel"></div>
+  <div id="modalOverlay" class="modal-layer hidden"></div>
 
   <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+  <script src="src/gameData.js"></script>
+  <script src="src/modelRegistry.js"></script>
+  <script src="src/modelLoader.js"></script>
   <script src="src/maps/floorMaps.js"></script>
   <script src="src/maps/innerWorldMap.js"></script>
   <script src="src/mapManager.js"></script>
+  <script src="src/saveSystem.js"></script>
   <script src="main.js"></script>
+  <script src="src/combatSystem.js"></script>
+  <script src="src/innerWorldUi.js"></script>
+  <script src="src/gameLoop.js"></script>
 </body>
 </html>
